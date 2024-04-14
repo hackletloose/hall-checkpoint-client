@@ -7,7 +7,7 @@ import pika
 import json
 
 # Konfigurieren des Loggings
-logging.basicConfig(filename='app.log', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(filename='app.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Umgebungsvariablen laden
 load_dotenv()
@@ -33,13 +33,40 @@ for api_client in api_clients:
 
 def connect_to_rabbitmq():
     credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
-    connection = pika.BlockingConnection(pika.ConnectionParameters('rabbit.1bv.eu', 5672, '/', credentials))
-    channel = connection.channel()
-    result = channel.queue_declare(queue='', exclusive=True)
-    queue_name = result.method.queue
-    channel.queue_bind(exchange='bans_fanout', queue=queue_name)
-    logging.info("Verbunden mit RabbitMQ und Queue gebunden.")
-    return channel, queue_name
+    parameters = pika.ConnectionParameters(
+        host='rabbit.1bv.eu',
+        port=5672,
+        virtual_host='/',
+        credentials=credentials,
+        socket_timeout=10,
+        blocked_connection_timeout=30,
+        heartbeat=600
+    )
+
+    try:
+        connection = pika.BlockingConnection(parameters)
+        channel = connection.channel()
+        result = channel.queue_declare(queue='', exclusive=True)
+        queue_name = result.method.queue
+        channel.queue_bind(exchange='bans_fanout', queue=queue_name)
+        logging.info("Verbunden mit RabbitMQ und Queue gebunden.")
+        return channel, queue_name
+    except pika.exceptions.ProbableAuthenticationError as err:
+        logging.error("Authentifizierungsfehler beim Verbinden zu RabbitMQ. Überprüfen Sie die Anmeldeinformationen: %s", err)
+        raise
+    except pika.exceptions.AMQPConnectionError as err:
+        logging.error("Verbindungsfehler zu RabbitMQ: %s", err)
+        raise
+    except Exception as err:
+        logging.error("Ein unerwarteter Fehler ist aufgetreten: %s", err)
+        raise
+
+if __name__ == '__main__':
+    try:
+        channel, queue_name = connect_to_rabbitmq()
+        print("Verbindung erfolgreich: Channel und Queue bereit.")
+    except Exception as e:
+        print("Fehler beim Verbinden zu RabbitMQ:", e)
 
 def receive_ban_from_queue(channel, queue_name):
     def callback(ch, method, properties, body):
@@ -74,5 +101,9 @@ def receive_ban_from_queue(channel, queue_name):
     channel.start_consuming()
 
 if __name__ == '__main__':
-    channel, queue_name = connect_to_rabbitmq()
-    receive_ban_from_queue(channel, queue_name)
+    try:
+        channel, queue_name = connect_to_rabbitmq()
+        print("Verbindung erfolgreich: Channel und Queue bereit.")
+        receive_ban_from_queue(channel, queue_name)  # Diesen Aufruf hier einfügen
+    except Exception as e:
+        print("Fehler beim Verbinden zu RabbitMQ:", e)
