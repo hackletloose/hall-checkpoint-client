@@ -21,10 +21,11 @@ class APIClient:
             return False
         return True
 
-    def is_logged_in():
-        check_url = f"{BASE_URL}/api/is_logged_in"
-        response = requests.get(check_url)
+    def is_logged_in(self):
+        check_url = f"{self.base_url}/api/is_logged_in"
+        response = self.session.get(check_url)
         return response.json().get('result', False)
+
 
     def do_perma_ban(self, player, steam_id_64, reason, by):
         ban_url = f"{self.base_url}/api/do_perma_ban"

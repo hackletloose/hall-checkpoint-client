@@ -1,109 +1,99 @@
+import asyncio
 import logging
-import requests
+import os
+import json
 from api_manager import APIClient
 from dotenv import load_dotenv
-import os
-import pika
-import json
+import aio_pika
+import aiohttp
 
 # Konfigurieren des Loggings
-logging.basicConfig(filename='app.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(message)s',
+                    handlers=[
+                        logging.FileHandler('app.log'),  # Log-Ausgabe in Datei
+                        logging.StreamHandler()  # Log-Ausgabe in die Konsole
+                    ])
 
 # Umgebungsvariablen laden
 load_dotenv()
-BASE_URLS = os.getenv('API_BASE_URLS')
+BASE_URLS = os.getenv('API_BASE_URLS').split(',')
 API_TOKEN = os.getenv('BEARER_TOKEN')
 API_USER = os.getenv('API_USER')
 API_PASS = os.getenv('API_PASS')
 YOUR_CLIENT_ID = os.getenv('CLIENT_ID')
 RABBITMQ_USER = os.getenv('RABBITMQ_USER')
 RABBITMQ_PASS = os.getenv('RABBITMQ_PASS')
+RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')
+RABBITMQ_PORT = int(os.getenv('RABBITMQ_PORT', '5672'))
 
-if BASE_URLS:
-    base_urls = BASE_URLS.split(',')
-    api_clients = [APIClient(url.strip(), API_TOKEN) for url in base_urls if url.strip()]
-else:
-    logging.error("Keine API-Basis-URLs gefunden. Überprüfen Sie Ihre .env-Konfiguration.")
-    raise Exception("Keine API-Basis-URLs gefunden. Überprüfen Sie Ihre .env-Konfiguration.")
+# API-Client-Instanzen erstellen
+api_clients = [APIClient(url.strip(), API_TOKEN) for url in BASE_URLS if url.strip()]
 
+# Authentifizierung bei den API-Clients
 for api_client in api_clients:
-    if not api_client.login(API_USER, API_PASS):
-        logging.error(f"Fehler bei der Anmeldung an der CRCON API für URL: {api_client.base_url}")
-        raise Exception(f"Fehler bei der Anmeldung an der CRCON API für URL: {api_client.base_url}")
+    if api_client.login(API_USER, API_PASS):
+        logging.info(f"Erfolgreich bei der API angemeldet für URL: {api_client.base_url}")
+    else:
+        logging.error(f"Fehler bei der Anmeldung an der API für URL: {api_client.base_url}")
+        raise Exception(f"Fehler bei der Anmeldung an der API für URL: {api_client.base_url}")
 
-def connect_to_rabbitmq():
-    credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASS)
-    parameters = pika.ConnectionParameters(
-        host='rabbit.1bv.eu',
-        port=5672,
-        virtual_host='/',
-        credentials=credentials,
-        socket_timeout=10,
-        blocked_connection_timeout=30,
-        heartbeat=600
+async def connect_to_rabbitmq():
+    logging.info("Versuche, eine Verbindung zu RabbitMQ herzustellen...")
+    connection = await aio_pika.connect_robust(
+        f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASS}@{RABBITMQ_HOST}:{RABBITMQ_PORT}/",
+        loop=asyncio.get_running_loop(),
+        heartbeat=600,
+        client_properties={'connection_name': 'my_connection'}
     )
+    channel = await connection.channel()
+    exchange = await channel.declare_exchange('bans_fanout', aio_pika.ExchangeType.FANOUT, durable=True)
+    queue = await channel.declare_queue('', exclusive=True)
+    await queue.bind(exchange)
+    logging.info("RabbitMQ Exchange und Queue deklariert und gebunden.")
+    return connection, channel, queue
 
+async def consume_messages(connection, channel, queue):
+    logging.info("Beginne mit dem Empfang von Nachrichten...")
+    async with connection, aiohttp.ClientSession() as session:  # Starte eine ClientSession für HTTP-Anfragen
+        async for message in queue:
+            logging.info(f"Nachricht empfangen, beginne Verarbeitung: {message.body.decode()[:100]}")
+            async with message.process():
+                try:
+                    ban_data = json.loads(message.body.decode())
+                    logging.info(f"Empfangene Ban-Daten: {ban_data}")
+                    for api_client in api_clients:
+                        if api_client.do_perma_ban(ban_data['player'], ban_data['steam_id_64'], ban_data['reason'], ban_data['by']):
+                            data_to_send = {
+                                'player': ban_data['player'],
+                                'steam_id_64': ban_data['steam_id_64'],
+                                'reason': ban_data['reason'],
+                                'banned': ban_data.get('banned', False),
+                                'links': ban_data.get('links', []),
+                                'attachments': ban_data.get('attachments', []),
+                                'issues': ban_data.get('issues', []),
+                                'by': ban_data['by'],
+                                'client_id': YOUR_CLIENT_ID
+                            }
+                            # Führe eine asynchrone POST-Anfrage aus
+                            async with session.post("https://api.1bv.eu/update_ban_status", json=data_to_send) as response:
+                                if response.status != 200:
+                                    response_text = await response.text()
+                                    logging.error(f"Fehler beim Aktualisieren des Status von {ban_data['player']}: {response_text}")
+                except json.JSONDecodeError:
+                    logging.error("Fehler beim Parsen der JSON-Daten")
+                    await message.nack(requeue=True)  # Nachricht wird zur Wiederverarbeitung in die Queue zurückgestellt
+                except Exception as e:
+                    logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
+                    await message.nack(requeue=True)  # Nachricht wird zur Wiederverarbeitung in die Queue zurückgestellt
+
+
+async def main():
     try:
-        connection = pika.BlockingConnection(parameters)
-        channel = connection.channel()
-        result = channel.queue_declare(queue='', exclusive=True)
-        queue_name = result.method.queue
-        channel.queue_bind(exchange='bans_fanout', queue=queue_name)
-        logging.info("Verbunden mit RabbitMQ und Queue gebunden.")
-        return channel, queue_name
-    except pika.exceptions.ProbableAuthenticationError as err:
-        logging.error("Authentifizierungsfehler beim Verbinden zu RabbitMQ. Überprüfen Sie die Anmeldeinformationen: %s", err)
-        raise
-    except pika.exceptions.AMQPConnectionError as err:
-        logging.error("Verbindungsfehler zu RabbitMQ: %s", err)
-        raise
-    except Exception as err:
-        logging.error("Ein unerwarteter Fehler ist aufgetreten: %s", err)
-        raise
+        connection, channel, queue = await connect_to_rabbitmq()
+        await consume_messages(connection, channel, queue)
+    except Exception as e:
+        logging.error(f"Fehler beim Verbinden zu RabbitMQ oder beim Empfangen von Nachrichten: {e}")
 
 if __name__ == '__main__':
-    try:
-        channel, queue_name = connect_to_rabbitmq()
-        print("Verbindung erfolgreich: Channel und Queue bereit.")
-    except Exception as e:
-        print("Fehler beim Verbinden zu RabbitMQ:", e)
-
-def receive_ban_from_queue(channel, queue_name):
-    def callback(ch, method, properties, body):
-        ban_info = body.decode()
-        try:
-            ban_data = json.loads(ban_info)
-            logging.debug(f"Gesendete Ban-Daten: {ban_data}")
-        except json.JSONDecodeError:
-            logging.error("Fehler beim Parsen der JSON-Daten")
-            return
-
-        if api_client.do_perma_ban(ban_data['player'], ban_data['steam_id_64'], ban_data['reason'], ban_data['by']):
-            data_to_send = {
-                'player': ban_data['player'],
-                'steam_id_64': ban_data['steam_id_64'],
-                'reason': ban_data['reason'],
-                'banned': ban_data.get('banned', False),
-                'links': ban_data.get('links', []),
-                'attachments': ban_data.get('attachments', []),
-                'issues': ban_data.get('issues', []),
-                'by': ban_data['by'],
-                'client_id': YOUR_CLIENT_ID
-            }
-            logging.info(f"Daten, die an die API gesendet werden: {data_to_send}")
-            response = requests.post("https://api.1bv.eu/update_ban_status", json=data_to_send)
-            if response.status_code != 200:
-                logging.error(f"Fehler beim Aktualisieren des Status von {ban_data['player']}. Antwort: {response.text}")
-
-    channel.basic_consume(queue=queue_name, on_message_callback=callback, auto_ack=True)
-    logging.info('Warte auf neue Banns...')
-    print('Warte auf neue Banns...')
-    channel.start_consuming()
-
-if __name__ == '__main__':
-    try:
-        channel, queue_name = connect_to_rabbitmq()
-        print("Verbindung erfolgreich: Channel und Queue bereit.")
-        receive_ban_from_queue(channel, queue_name)  # Diesen Aufruf hier einfügen
-    except Exception as e:
-        print("Fehler beim Verbinden zu RabbitMQ:", e)
+    asyncio.run(main())
