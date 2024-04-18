@@ -5,6 +5,7 @@ import json
 from api_manager import APIClient
 from dotenv import load_dotenv
 import aio_pika
+from aio_pika import IncomingMessage, connect_robust, ExchangeType
 import aiohttp
 
 # Konfigurieren des Loggings
@@ -53,7 +54,7 @@ async def connect_to_rabbitmq():
     logging.info("RabbitMQ Exchange und Queue deklariert und gebunden.")
     return connection, channel, queue
 
-async def consume_messages(connection, channel, queue):
+async def consume_messages(connection, channel, queue, api_client):
     logging.info("Beginne mit dem Empfang von Nachrichten...")
     async with connection, aiohttp.ClientSession() as session:  # Starte eine ClientSession für HTTP-Anfragen
         async for message in queue:
@@ -87,13 +88,109 @@ async def consume_messages(connection, channel, queue):
                     logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
                     await message.nack(requeue=True)  # Nachricht wird zur Wiederverarbeitung in die Queue zurückgestellt
 
+async def connect_to_unban_rabbitmq():
+    logging.info("Versuche, eine Verbindung zu RabbitMQ für Unban-Nachrichten herzustellen...")
+    unban_connection = await aio_pika.connect_robust(
+        f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASS}@{RABBITMQ_HOST}:{RABBITMQ_PORT}/",
+        loop=asyncio.get_running_loop(),
+        heartbeat=600,
+        client_properties={'connection_name': 'unban_connection'}
+    )
+    unban_channel = await unban_connection.channel()
+    unban_exchange = await unban_channel.declare_exchange('unbans_fanout', aio_pika.ExchangeType.FANOUT, durable=True)
+    unban_queue = await unban_channel.declare_queue('', exclusive=True)
+    await unban_queue.bind(unban_exchange)
+    logging.info("Unban RabbitMQ Exchange und Queue deklariert und gebunden.")
+    return unban_connection, unban_channel, unban_queue
+
+async def consume_unban_messages(connection, channel, queue, api_client):
+    logging.info("Beginne mit dem Empfang von Unban-Nachrichten...")
+    async with connection:
+        async for message in queue:
+            logging.info(f"Unban-Nachricht empfangen, beginne Verarbeitung: {message.body.decode()[:100]}")
+            async with message.process():
+                try:
+                    unban_data = json.loads(message.body.decode())
+                    logging.info(f"Empfangene Unban-Daten: {unban_data}")
+                    # Verwende do_unban Methode, um den Unban durchzuführen
+                    if api_client.do_unban(unban_data['steam_id_64']):
+                        logging.info(f"Unban successful for steam_id_64: {unban_data['steam_id_64']}")
+                    else:
+                        logging.error(f"Unban operation failed for steam_id_64: {unban_data['steam_id_64']}")
+                except json.JSONDecodeError:
+                    logging.error("Fehler beim Parsen der JSON-Daten")
+                    await message.nack(requeue=True)
+                except Exception as e:
+                    logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
+                    await message.nack(requeue=True)
+
+async def connect_to_tempban_rabbitmq():
+    logging.info("Versuche, eine Verbindung zu RabbitMQ für Tempban-Nachrichten herzustellen...")
+    tempban_connection = await aio_pika.connect_robust(
+        f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASS}@{RABBITMQ_HOST}:{RABBITMQ_PORT}/",
+        loop=asyncio.get_running_loop(),
+        heartbeat=600,
+        client_properties={'connection_name': 'tempban_connection'}
+    )
+    tempban_channel = await tempban_connection.channel()
+    tempban_exchange = await tempban_channel.declare_exchange('tempbans_fanout', aio_pika.ExchangeType.FANOUT, durable=True)
+    tempban_queue = await tempban_channel.declare_queue('', exclusive=True)
+    await tempban_queue.bind(tempban_exchange)
+    logging.info("Tempban RabbitMQ Exchange und Queue deklariert und gebunden.")
+    return tempban_connection, tempban_channel, tempban_queue
+
+async def consume_tempban_messages(connection, channel, queue, api_client):
+    logging.info("Beginne mit dem Empfang von Tempban-Nachrichten...")
+    async with connection:
+        async for message in queue:
+            logging.info(f"Tempban-Nachricht empfangen, beginne Verarbeitung: {message.body.decode()[:100]}")
+            async with message.process():
+                try:
+                    ban_data = json.loads(message.body.decode())
+                    logging.info(f"Empfangene Tempban-Daten: {ban_data}")
+                    
+                    # Verwende do_temp_ban Methode, um den Tempban durchzuführen
+                    # Achten Sie darauf, dass alle erforderlichen Daten vorhanden sind
+                    if 'steam_id_64' in ban_data and 'player' in ban_data and 'reason' in ban_data and 'by' in ban_data:
+                        if api_client.do_temp_ban(ban_data['player'], ban_data['steam_id_64'], 24, ban_data['reason'], ban_data['by']):
+                            logging.info(f"Tempban erfolgreich für Steam ID: {ban_data['steam_id_64']}")
+                        else:
+                            logging.error(f"Tempban-Vorgang fehlgeschlagen für Steam ID: {ban_data['steam_id_64']}")
+                    else:
+                        logging.error("Not all required data fields are available in the tempban data")
+                        await message.nack(requeue=False)  # Nack without requeue if data is missing
+
+                except json.JSONDecodeError:
+                    logging.error("Fehler beim Parsen der JSON-Daten")
+                    await message.nack(requeue=True)
+                except Exception as e:
+                    logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
+                    await message.nack(requeue=True)
 
 async def main():
+    # Stellen Sie sicher, dass die API Clients korrekt initialisiert sind
+    api_client = api_clients[0]  # oder einen spezifischen Client auswählen
     try:
-        connection, channel, queue = await connect_to_rabbitmq()
-        await consume_messages(connection, channel, queue)
-    except Exception as e:
-        logging.error(f"Fehler beim Verbinden zu RabbitMQ oder beim Empfangen von Nachrichten: {e}")
+        ban_connection, ban_channel, ban_queue = await connect_to_rabbitmq()
+        unban_connection, unban_channel, unban_queue = await connect_to_unban_rabbitmq()
+        tempban_connection, tempban_channel, tempban_queue = await connect_to_tempban_rabbitmq()
+
+        # Starten Sie die Verarbeitungsaufgaben
+        task_consume_ban = asyncio.create_task(consume_messages(ban_connection, ban_channel, ban_queue, api_client))
+        task_consume_unban = asyncio.create_task(consume_unban_messages(unban_connection, unban_channel, unban_queue, api_client))
+        task_consume_tempban = asyncio.create_task(consume_tempban_messages(tempban_connection, tempban_channel, tempban_queue, api_client))
+
+        await asyncio.gather(task_consume_ban, task_consume_unban, task_consume_tempban)
+    finally:
+        # Verbindungen schließen
+        if ban_connection:
+            await ban_connection.close()
+        if unban_connection:
+            await unban_connection.close()
+        if tempban_connection:
+            await tempban_connection.close()
 
 if __name__ == '__main__':
     asyncio.run(main())
+
+

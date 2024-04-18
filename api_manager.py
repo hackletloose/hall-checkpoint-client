@@ -43,6 +43,24 @@ class APIClient:
             print(f"Fehler beim Aufrufen von do_perma_ban: {e}")
             return False
 
+    def do_temp_ban(self, player, steam_id_64, duration_hours, reason, by):
+        temp_ban_url = f"{self.base_url}/api/do_temp_ban"
+        payload = {
+            'player': player,
+            'steam_id_64': steam_id_64,
+            'duration_hours': duration_hours,
+            'reason': reason,
+            'by': by
+        }
+        try:
+            response = self.session.post(temp_ban_url, json=payload)
+            print(f"do_temp_ban response: {response.status_code}, {response.text}")
+            return response.ok
+        except Exception as e:
+            print(f"Fehler beim Aufrufen von do_temp_ban: {e}")
+            return False
+
+
 
     def do_unban(self, steam_id):
         unban_url = f"{self.base_url}/api/do_unban"
