@@ -66,3 +66,8 @@ class APIClient:
         unban_url = f"{self.base_url}/api/do_unban"
         response = self.session.post(unban_url, json={'steam_id_64': steam_id})
         return response.ok
+
+    def unblacklist_player(self, steam_id):
+        unban_url = f"{self.base_url}/api/unblacklist_player"
+        response = self.session.post(unban_url, json={'steam_id_64': steam_id})
+        return response.ok

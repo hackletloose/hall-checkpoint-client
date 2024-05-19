@@ -112,11 +112,16 @@ async def consume_unban_messages(connection, channel, queue, api_client):
                 try:
                     unban_data = json.loads(message.body.decode())
                     logging.info(f"Empfangene Unban-Daten: {unban_data}")
-                    # Verwende do_unban Methode, um den Unban durchzuführen
+                    # Führe do_unban und unblacklist_player aus
                     if api_client.do_unban(unban_data['steam_id_64']):
-                        logging.info(f"Unban successful for steam_id_64: {unban_data['steam_id_64']}")
+                        logging.info(f"Unban erfolgreich für steam_id_64: {unban_data['steam_id_64']}")
                     else:
-                        logging.error(f"Unban operation failed for steam_id_64: {unban_data['steam_id_64']}")
+                        logging.error(f"Unban-Vorgang fehlgeschlagen für steam_id_64: {unban_data['steam_id_64']}")
+                    
+                    if api_client.unblacklist_player(unban_data['steam_id_64']):
+                        logging.info(f"Player unblacklisted successfully for steam_id_64: {unban_data['steam_id_64']}")
+                    else:
+                        logging.error(f"Unblacklist operation failed for steam_id_64: {unban_data['steam_id_64']}")
                 except json.JSONDecodeError:
                     logging.error("Fehler beim Parsen der JSON-Daten")
                     await message.nack(requeue=True)
@@ -192,5 +197,3 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
-
-
