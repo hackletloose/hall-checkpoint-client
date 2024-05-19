@@ -1,4 +1,3 @@
-# Importing necessary libraries
 import requests
 import os
 from dotenv import load_dotenv
@@ -25,7 +24,6 @@ class APIClient:
         check_url = f"{self.base_url}/api/is_logged_in"
         response = self.session.get(check_url)
         return response.json().get('result', False)
-
 
     def do_perma_ban(self, player, steam_id_64, reason, by):
         ban_url = f"{self.base_url}/api/do_perma_ban"
@@ -60,8 +58,6 @@ class APIClient:
             print(f"Fehler beim Aufrufen von do_temp_ban: {e}")
             return False
 
-
-
     def do_unban(self, steam_id):
         unban_url = f"{self.base_url}/api/do_unban"
         response = self.session.post(unban_url, json={'steam_id_64': steam_id})
@@ -71,3 +67,19 @@ class APIClient:
         unban_url = f"{self.base_url}/api/unblacklist_player"
         response = self.session.post(unban_url, json={'steam_id_64': steam_id})
         return response.ok
+
+    def do_blacklist_player(self, steam_id_64, name, reason, by):
+        blacklist_url = f"{self.base_url}/api/blacklist_player"
+        payload = {
+            'steam_id_64': steam_id_64,
+            'name': name,
+            'reason': reason,
+            'by': by
+        }
+        try:
+            response = self.session.post(blacklist_url, json=payload)
+            print(f"do_blacklist_player response: {response.status_code}, {response.text}")
+            return response.ok
+        except Exception as e:
+            print(f"Fehler beim Aufrufen von do_blacklist_player: {e}")
+            return False

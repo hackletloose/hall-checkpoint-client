@@ -5,7 +5,7 @@ import json
 from api_manager import APIClient
 from dotenv import load_dotenv
 import aio_pika
-from aio_pika import IncomingMessage, connect_robust, ExchangeType
+from aio_pika import connect_robust, ExchangeType
 import aiohttp
 
 # Konfigurieren des Loggings
@@ -48,7 +48,7 @@ async def connect_to_rabbitmq():
         client_properties={'connection_name': 'my_connection'}
     )
     channel = await connection.channel()
-    exchange = await channel.declare_exchange('bans_fanout', aio_pika.ExchangeType.FANOUT, durable=True)
+    exchange = await channel.declare_exchange('bans_fanout', ExchangeType.FANOUT, durable=True)
     queue = await channel.declare_queue('', exclusive=True)
     await queue.bind(exchange)
     logging.info("RabbitMQ Exchange und Queue deklariert und gebunden.")
@@ -64,6 +64,7 @@ async def consume_messages(connection, channel, queue, api_client):
                     ban_data = json.loads(message.body.decode())
                     logging.info(f"Empfangene Ban-Daten: {ban_data}")
                     for api_client in api_clients:
+                        # Permanent Ban
                         if api_client.do_perma_ban(ban_data['player'], ban_data['steam_id_64'], ban_data['reason'], ban_data['by']):
                             data_to_send = {
                                 'player': ban_data['player'],
@@ -81,6 +82,12 @@ async def consume_messages(connection, channel, queue, api_client):
                                 if response.status != 200:
                                     response_text = await response.text()
                                     logging.error(f"Fehler beim Aktualisieren des Status von {ban_data['player']}: {response_text}")
+                        
+                        # Blacklist Player
+                        if api_client.do_blacklist_player(ban_data['steam_id_64'], ban_data['player'], ban_data['reason'], ban_data['by']):
+                            logging.info(f"Player erfolgreich auf die Blacklist gesetzt: {ban_data['steam_id_64']}")
+                        else:
+                            logging.error(f"Fehler beim Setzen auf die Blacklist für: {ban_data['steam_id_64']}")
                 except json.JSONDecodeError:
                     logging.error("Fehler beim Parsen der JSON-Daten")
                     await message.nack(requeue=True)  # Nachricht wird zur Wiederverarbeitung in die Queue zurückgestellt
@@ -97,7 +104,7 @@ async def connect_to_unban_rabbitmq():
         client_properties={'connection_name': 'unban_connection'}
     )
     unban_channel = await unban_connection.channel()
-    unban_exchange = await unban_channel.declare_exchange('unbans_fanout', aio_pika.ExchangeType.FANOUT, durable=True)
+    unban_exchange = await unban_channel.declare_exchange('unbans_fanout', ExchangeType.FANOUT, durable=True)
     unban_queue = await unban_channel.declare_queue('', exclusive=True)
     await unban_queue.bind(unban_exchange)
     logging.info("Unban RabbitMQ Exchange und Queue deklariert und gebunden.")
@@ -138,7 +145,7 @@ async def connect_to_tempban_rabbitmq():
         client_properties={'connection_name': 'tempban_connection'}
     )
     tempban_channel = await tempban_connection.channel()
-    tempban_exchange = await tempban_channel.declare_exchange('tempbans_fanout', aio_pika.ExchangeType.FANOUT, durable=True)
+    tempban_exchange = await tempban_channel.declare_exchange('tempbans_fanout', ExchangeType.FANOUT, durable=True)
     tempban_queue = await tempban_channel.declare_queue('', exclusive=True)
     await tempban_queue.bind(tempban_exchange)
     logging.info("Tempban RabbitMQ Exchange und Queue deklariert und gebunden.")
