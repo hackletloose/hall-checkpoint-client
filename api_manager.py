@@ -83,3 +83,32 @@ class APIClient:
         except Exception as e:
             print(f"Fehler beim Aufrufen von do_blacklist_player: {e}")
             return False
+
+    def do_watch_player(self, player, steam_id_64, reason):
+        watchlist_url = f"{self.base_url}/api/do_watch_player"
+        payload = {
+            'player': player,
+            'steam_id_64': steam_id_64,
+            'reason': reason
+        }
+        try:
+            response = self.session.post(watchlist_url, json=payload)
+            print(f"do_watch_player response: {response.status_code}, {response.text}")
+            return response.ok
+        except Exception as e:
+            print(f"Fehler beim Aufrufen von do_watch_player: {e}")
+            return False
+
+    def do_unwatch_player(self, player, steam_id_64):
+        unwatch_url = f"{self.base_url}/api/do_unwatch_player"
+        payload = {
+            'player': player,
+            'steam_id_64': steam_id_64
+        }
+        try:
+            response = self.session.post(unwatch_url, json=payload)
+            print(f"do_unwatch_player response: {response.status_code}, {response.text}")
+            return response.ok
+        except Exception as e:
+            print(f"Fehler beim Aufrufen von do_unwatch_player: {e}")
+            return False

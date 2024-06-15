@@ -174,6 +174,90 @@ async def consume_tempban_messages(connection, channel, queue, api_client):
 
                 except json.JSONDecodeError:
                     logging.error("Fehler beim Parsen der JSON-Daten")
+                    await message.nack(requeue(True))
+                except Exception as e:
+                    logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
+                    await message.nack(requeue=True)
+
+async def connect_to_watchlist_rabbitmq():
+    logging.info("Versuche, eine Verbindung zu RabbitMQ für Watchlist-Nachrichten herzustellen...")
+    watchlist_connection = await aio_pika.connect_robust(
+        f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASS}@{RABBITMQ_HOST}:{RABBITMQ_PORT}/",
+        loop=asyncio.get_running_loop(),
+        heartbeat=600,
+        client_properties={'connection_name': 'watchlist_connection'}
+    )
+    watchlist_channel = await watchlist_connection.channel()
+    watchlist_exchange = await watchlist_channel.declare_exchange('watchlists_fanout', ExchangeType.FANOUT, durable=True)
+    watchlist_queue = await watchlist_channel.declare_queue('', exclusive=True)
+    await watchlist_queue.bind(watchlist_exchange)
+    logging.info("Watchlist RabbitMQ Exchange und Queue deklariert und gebunden.")
+    return watchlist_connection, watchlist_channel, watchlist_queue
+
+async def consume_watchlist_messages(connection, channel, queue, api_client):
+    logging.info("Beginne mit dem Empfang von Watchlist-Nachrichten...")
+    async with connection:
+        async for message in queue:
+            logging.info(f"Watchlist-Nachricht empfangen, beginne Verarbeitung: {message.body.decode()[:100]}")
+            async with message.process():
+                try:
+                    watchlist_data = json.loads(message.body.decode())
+                    logging.info(f"Empfangene Watchlist-Daten: {watchlist_data}")
+                    
+                    # Verwende do_watch_player Methode, um den Spieler zur Watchlist hinzuzufügen
+                    if 'steam_id_64' in watchlist_data and 'player' in watchlist_data and 'reason' in watchlist_data:
+                        if api_client.do_watch_player(watchlist_data['player'], watchlist_data['steam_id_64'], watchlist_data['reason']):
+                            logging.info(f"Spieler erfolgreich zur Watchlist hinzugefügt: {watchlist_data['steam_id_64']}")
+                        else:
+                            logging.error(f"Fehler beim Hinzufügen zur Watchlist für Steam ID: {watchlist_data['steam_id_64']}")
+                    else:
+                        logging.error("Not all required data fields are available in the watchlist data")
+                        await message.nack(requeue(False))  # Nack without requeue if data is missing
+
+                except json.JSONDecodeError:
+                    logging.error("Fehler beim Parsen der JSON-Daten")
+                    await message.nack(requeue=True)
+                except Exception as e:
+                    logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
+                    await message.nack(requeue=True)
+
+async def connect_to_unwatch_rabbitmq():
+    logging.info("Versuche, eine Verbindung zu RabbitMQ für Unwatch-Nachrichten herzustellen...")
+    unwatch_connection = await aio_pika.connect_robust(
+        f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASS}@{RABBITMQ_HOST}:{RABBITMQ_PORT}/",
+        loop=asyncio.get_running_loop(),
+        heartbeat=600,
+        client_properties={'connection_name': 'unwatch_connection'}
+    )
+    unwatch_channel = await unwatch_connection.channel()
+    unwatch_exchange = await unwatch_channel.declare_exchange('unwatch_fanout', ExchangeType.FANOUT, durable=True)
+    unwatch_queue = await unwatch_channel.declare_queue('', exclusive=True)
+    await unwatch_queue.bind(unwatch_exchange)
+    logging.info("Unwatch RabbitMQ Exchange und Queue deklariert und gebunden.")
+    return unwatch_connection, unwatch_channel, unwatch_queue
+
+async def consume_unwatch_messages(connection, channel, queue, api_client):
+    logging.info("Beginne mit dem Empfang von Unwatch-Nachrichten...")
+    async with connection:
+        async for message in queue:
+            logging.info(f"Unwatch-Nachricht empfangen, beginne Verarbeitung: {message.body.decode()[:100]}")
+            async with message.process():
+                try:
+                    unwatch_data = json.loads(message.body.decode())
+                    logging.info(f"Empfangene Unwatch-Daten: {unwatch_data}")
+
+                    # Verwende do_unwatch_player Methode, um den Spieler von der Watchlist zu entfernen
+                    if 'steam_id_64' in unwatch_data and 'player' in unwatch_data:
+                        if api_client.do_unwatch_player(unwatch_data['player'], unwatch_data['steam_id_64']):
+                            logging.info(f"Spieler erfolgreich von der Watchlist entfernt: {unwatch_data['steam_id_64']}")
+                        else:
+                            logging.error(f"Fehler beim Entfernen von der Watchlist für Steam ID: {unwatch_data['steam_id_64']}")
+                    else:
+                        logging.error("Not all required data fields are available in the unwatch data")
+                        await message.nack(requeue=False)  # Nack without requeue if data is missing
+
+                except json.JSONDecodeError:
+                    logging.error("Fehler beim Parsen der JSON-Daten")
                     await message.nack(requeue=True)
                 except Exception as e:
                     logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
@@ -186,13 +270,17 @@ async def main():
         ban_connection, ban_channel, ban_queue = await connect_to_rabbitmq()
         unban_connection, unban_channel, unban_queue = await connect_to_unban_rabbitmq()
         tempban_connection, tempban_channel, tempban_queue = await connect_to_tempban_rabbitmq()
+        watchlist_connection, watchlist_channel, watchlist_queue = await connect_to_watchlist_rabbitmq()
+        unwatch_connection, unwatch_channel, unwatch_queue = await connect_to_unwatch_rabbitmq()
 
         # Starten Sie die Verarbeitungsaufgaben
         task_consume_ban = asyncio.create_task(consume_messages(ban_connection, ban_channel, ban_queue, api_client))
         task_consume_unban = asyncio.create_task(consume_unban_messages(unban_connection, unban_channel, unban_queue, api_client))
         task_consume_tempban = asyncio.create_task(consume_tempban_messages(tempban_connection, tempban_channel, tempban_queue, api_client))
+        task_consume_watchlist = asyncio.create_task(consume_watchlist_messages(watchlist_connection, watchlist_channel, watchlist_queue, api_client))
+        task_consume_unwatch = asyncio.create_task(consume_unwatch_messages(unwatch_connection, unwatch_channel, unwatch_queue, api_client))
 
-        await asyncio.gather(task_consume_ban, task_consume_unban, task_consume_tempban)
+        await asyncio.gather(task_consume_ban, task_consume_unban, task_consume_tempban, task_consume_watchlist, task_consume_unwatch)
     finally:
         # Verbindungen schließen
         if ban_connection:
@@ -201,6 +289,10 @@ async def main():
             await unban_connection.close()
         if tempban_connection:
             await tempban_connection.close()
+        if watchlist_connection:
+            await watchlist_connection.close()
+        if unwatch_connection:
+            await unwatch_connection.close()
 
 if __name__ == '__main__':
     asyncio.run(main())
