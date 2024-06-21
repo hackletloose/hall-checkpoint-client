@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import aio_pika
 from aio_pika import connect_robust, ExchangeType
 import aiohttp
+from urllib.parse import urlencode
 
 # Konfigurieren des Loggings
 logging.basicConfig(level=logging.INFO,
@@ -64,11 +65,15 @@ async def consume_messages(connection, channel, queue, api_client):
                     ban_data = json.loads(message.body.decode())
                     logging.info(f"Empfangene Ban-Daten: {ban_data}")
                     for api_client in api_clients:
+                        steam_id = ban_data['steam_id_64']
+                        message_url = f"https://hackletloose.eu/ban_detail.php?steam_id={steam_id}"
+                        comment_message = f"Ban Detail: {message_url}"
+
                         # Permanent Ban
-                        if api_client.do_perma_ban(ban_data['player'], ban_data['steam_id_64'], ban_data['reason'], ban_data['by']):
+                        if api_client.do_perma_ban(ban_data['player'], steam_id, ban_data['reason'], ban_data['by']):
                             data_to_send = {
                                 'player': ban_data['player'],
-                                'steam_id_64': ban_data['steam_id_64'],
+                                'steam_id_64': steam_id,
                                 'reason': ban_data['reason'],
                                 'banned': ban_data.get('banned', False),
                                 'links': ban_data.get('links', []),
@@ -82,18 +87,24 @@ async def consume_messages(connection, channel, queue, api_client):
                                 if response.status != 200:
                                     response_text = await response.text()
                                     logging.error(f"Fehler beim Aktualisieren des Status von {ban_data['player']}: {response_text}")
+
+                            # Post player comment
+                            if api_client.post_player_comment(steam_id, comment_message):
+                                logging.info(f"Erfolgreich Kommentar gepostet für Steam ID: {steam_id}")
+                            else:
+                                logging.error(f"Fehler beim Posten des Kommentars für Steam ID: {steam_id}. Kommentar: {comment_message}")
                         
                         # Blacklist Player
-                        if api_client.do_blacklist_player(ban_data['steam_id_64'], ban_data['player'], ban_data['reason'], ban_data['by']):
-                            logging.info(f"Player erfolgreich auf die Blacklist gesetzt: {ban_data['steam_id_64']}")
+                        if api_client.do_blacklist_player(steam_id, ban_data['player'], ban_data['reason'], ban_data['by']):
+                            logging.info(f"Player erfolgreich auf die Blacklist gesetzt: {steam_id}")
                         else:
-                            logging.error(f"Fehler beim Setzen auf die Blacklist für: {ban_data['steam_id_64']}")
+                            logging.error(f"Fehler beim Setzen auf die Blacklist für: {steam_id}")
                 except json.JSONDecodeError:
                     logging.error("Fehler beim Parsen der JSON-Daten")
                     await message.nack(requeue=True)  # Nachricht wird zur Wiederverarbeitung in die Queue zurückgestellt
                 except Exception as e:
                     logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
-                    await message.nack(requeue=True)  # Nachricht wird zur Wiederverarbeitung in die Queue zurückgestellt
+                    await message.nack(requeue(True))  # Nachricht wird zur Wiederverarbeitung in die Queue zurückgestellt
 
 async def connect_to_unban_rabbitmq():
     logging.info("Versuche, eine Verbindung zu RabbitMQ für Unban-Nachrichten herzustellen...")

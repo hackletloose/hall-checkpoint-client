@@ -112,3 +112,24 @@ class APIClient:
         except Exception as e:
             print(f"Fehler beim Aufrufen von do_unwatch_player: {e}")
             return False
+
+    def post_player_comment(self, steam_id, comment):
+        post_comment_url = f"{self.base_url}/api/post_player_comment"
+        payload = {
+            'steam_id_64': steam_id,
+            'comment': comment  # Hier ändern wir message auf comment
+        }
+        try:
+            response = self.session.post(post_comment_url, json=payload)
+            print(f"post_player_comment response: {response.status_code}, {response.text}")
+            if response.status_code == 200:
+                response_data = response.json()
+                if not response_data.get("failed", True):
+                    return True
+                else:
+                    print(f"Fehler in der API-Antwort: {response_data}")
+                    return False
+            return False
+        except Exception as e:
+            print(f"Fehler beim Aufrufen von post_player_comment: {e}")
+            return False
