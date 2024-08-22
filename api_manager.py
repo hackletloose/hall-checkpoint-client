@@ -139,8 +139,7 @@ class APIClient:
             print(f"Fehler beim Aufrufen von do_blacklist_player: {e}")
             logging.error(f"Fehler beim Aufrufen von do_blacklist_player: {e}")
             return False
-
-
+        
     def do_watch_player(self, player_name, player_id, reason, by):
         if self.api_version.startswith("v10"):
             watchlist_url = f"{self.base_url}/api/watch_player"
@@ -158,11 +157,17 @@ class APIClient:
                 'reason': reason
             }
         try:
+            logging.info(f"Sending request to {watchlist_url} with payload: {payload}")
             response = self.session.post(watchlist_url, json=payload)
-            print(f"do_watch_player response: {response.status_code}, {response.text}")
-            return response.ok
+            logging.info(f"Received response: {response.status_code}, {response.text}")
+            
+            if response.status_code == 200:
+                return True
+            else:
+                logging.error(f"Failed to add player to watchlist: {response.status_code}, {response.text}")
+                return False
         except Exception as e:
-            print(f"Fehler beim Aufrufen von do_watch_player: {e}")
+            logging.error(f"Fehler beim Aufrufen von do_watch_player: {e}")
             return False
 
     def do_unwatch_player(self, player_name, player_id):

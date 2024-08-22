@@ -86,55 +86,47 @@ async def consume_messages(connection, channel, queue, api_clients):
                 player_name = ban_data.get('player_name', ban_data.get('player'))
                 player_id = ban_data.get('player_id', ban_data.get('steam_id_64'))
 
-                if not player_name or not player_id:
-                    logging.error("Fehlende erforderliche Datenfelder in den Ban-Daten")
-                    await message.nack(requeue=True)
+                # Überprüfen auf fehlende oder ungültige Daten
+                if not player_name:
+                    logging.error(f"Fehlendes 'player_name' in den Ban-Daten: {ban_data}")
+                    await message.nack(requeue=False)
                     continue
-
+                if not player_id:
+                    logging.error(f"Fehlendes 'player_id' in den Ban-Daten: {ban_data}")
+                    await message.nack(requeue=False)
+                    continue
+                
+                # Verarbeite den Bann für jeden API-Client
                 for api_client in api_clients:
                     version = api_client.api_version
+                    steam_id = player_id  # In allen Versionen wird jetzt die korrekte steam_id verwendet
 
-                    if version.startswith("v10"):
-                        if api_client.do_perma_ban(player_name, player_id, ban_data['reason'], ban_data['by']):
-                            logging.info(f"Permanent-Bann erfolgreich für Player ID: {player_id}")
-                        else:
-                            logging.error(f"Permanent-Bann fehlgeschlagen für Player ID: {player_id}")
-
-                        comment_message = f"Ban Detail: https://hackletloose.eu/ban_detail.php?steam_id={player_id}"
-                        if api_client.post_player_comment(player_id, comment_message):
-                            logging.info(f"Erfolgreich Kommentar gepostet für Player ID: {player_id}")
-                        else:
-                            logging.error(f"Fehler beim Posten des Kommentars für Player ID: {player_id}. Kommentar: {comment_message}")
-
-                        if api_client.do_blacklist_player(player_id, player_name, ban_data['reason'], ban_data['by']):
-                            logging.info(f"Player erfolgreich auf die Blacklist gesetzt: {player_id}")
-                        else:
-                            logging.error(f"Fehler beim Setzen auf die Blacklist für Player ID: {player_id}")
+                    # Permanent-Ban durchführen
+                    if api_client.do_perma_ban(player_name, steam_id, ban_data['reason'], ban_data['by']):
+                        logging.info(f"Permanent-Bann erfolgreich für Steam ID: {steam_id}")
                     else:
-                        if api_client.do_perma_ban(player_name, ban_data['steam_id_64'], ban_data['reason'], ban_data['by']):
-                            logging.info(f"Permanent-Bann erfolgreich für Steam ID: {ban_data['steam_id_64']}")
-                        else:
-                            logging.error(f"Permanent-Bann fehlgeschlagen für Steam ID: {ban_data['steam_id_64']}")
+                        logging.error(f"Permanent-Bann fehlgeschlagen für Steam ID: {steam_id}")
 
-                        comment_message = f"Ban Detail: https://hackletloose.eu/ban_detail.php?steam_id={ban_data['steam_id_64']}"
-                        if api_client.post_player_comment(ban_data['steam_id_64'], comment_message):
-                            logging.info(f"Erfolgreich Kommentar gepostet für Steam ID: {ban_data['steam_id_64']}")
-                        else:
-                            logging.error(f"Fehler beim Posten des Kommentars für Steam ID: {ban_data['steam_id_64']}. Kommentar: {comment_message}")
+                    # Kommentar posten
+                    comment_message = f"Ban Detail: https://hackletloose.eu/ban_detail.php?steam_id={steam_id}"
+                    if api_client.post_player_comment(steam_id, comment_message):
+                        logging.info(f"Erfolgreich Kommentar gepostet für Steam ID: {steam_id}")
+                    else:
+                        logging.error(f"Fehler beim Posten des Kommentars für Steam ID: {steam_id}. Kommentar: {comment_message}")
 
-                        if api_client.do_blacklist_player(ban_data['steam_id_64'], player_name, ban_data['reason'], ban_data['by']):
-                            logging.info(f"Player erfolgreich auf die Blacklist gesetzt: {ban_data['steam_id_64']}")
-                        else:
-                            logging.error(f"Fehler beim Setzen auf die Blacklist für Steam ID: {ban_data['steam_id_64']}")
+                    # Spieler auf die Blacklist setzen
+                    if api_client.do_blacklist_player(steam_id, player_name, ban_data['reason'], ban_data['by']):
+                        logging.info(f"Spieler erfolgreich auf die Blacklist gesetzt: {steam_id}")
+                    else:
+                        logging.error(f"Fehler beim Setzen auf die Blacklist für Steam ID: {steam_id}")
+
                 await message.ack()
             except json.JSONDecodeError:
                 logging.error("Fehler beim Parsen der JSON-Daten")
-                await message.nack(requeue=True)
+                await message.nack(requeue=False)
             except Exception as e:
                 logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
-                await message.nack(requeue=True)
-
-
+                await message.nack(requeue=False)
 
 async def connect_to_unban_rabbitmq(client_id):
     logging.info(f"Versuche, eine Verbindung zu RabbitMQ für Unban-Nachrichten herzustellen für Client {client_id}...")
@@ -162,8 +154,11 @@ async def consume_unban_messages(connection, channel, queue, api_clients):
                 player_name = unban_data.get('player_name', unban_data.get('player'))
                 player_id = unban_data.get('player_id', unban_data.get('steam_id_64'))
 
+                if not player_name:
+                    logging.error(f"Fehlendes 'player_name' in den Unban-Daten: {unban_data}")
+                if not player_id:
+                    logging.error(f"Fehlendes 'player_id' in den Unban-Daten: {unban_data}")
                 if not player_name or not player_id:
-                    logging.error("Fehlende erforderliche Datenfelder in den Unban-Daten")
                     await message.nack(requeue=True)
                     continue
 
@@ -184,11 +179,10 @@ async def consume_unban_messages(connection, channel, queue, api_clients):
                 await message.ack()
             except json.JSONDecodeError:
                 logging.error("Fehler beim Parsen der JSON-Daten")
-                await message.nack(requeue=True)
+                await message.nack(requeue(True))
             except Exception as e:
                 logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
-                await message.nack(requeue=True)
-
+                await message.nack(requeue(True))
 
 async def connect_to_tempban_rabbitmq(client_id):
     logging.info(f"Versuche, eine Verbindung zu RabbitMQ für Tempban-Nachrichten herzustellen für Client {client_id}...")
@@ -200,7 +194,7 @@ async def connect_to_tempban_rabbitmq(client_id):
     )
     tempban_channel = await tempban_connection.channel()
     exchange_name = f'tempbans_fanout_{client_id}'
-    tempban_exchange = await tempban_channel.declare_exchange(exchange_name, aio_pika.ExchangeType.FANOUT, durable=True)
+    tempban_exchange = await tempban_channel.declare_exchange(exchange_name, ExchangeType.FANOUT, durable=True)
     tempban_queue = await tempban_channel.declare_queue(f'tempbans_queue_{client_id}', durable=True)
     await tempban_queue.bind(tempban_exchange, routing_key='')
     logging.info(f"RabbitMQ Queue tempbans_queue_{client_id} deklariert und gebunden.")
@@ -219,9 +213,12 @@ async def consume_tempban_messages(connection, channel, queue, api_clients):
                     player_name = ban_data.get('player_name', ban_data.get('player'))
                     player_id = ban_data.get('player_id', ban_data.get('steam_id_64'))
 
+                    if not player_name:
+                        logging.error(f"Fehlendes 'player_name' in den Tempban-Daten: {ban_data}")
+                    if not player_id:
+                        logging.error(f"Fehlendes 'player_id' in den Tempban-Daten: {ban_data}")
                     if not player_name or not player_id:
-                        logging.error("Fehlende erforderliche Datenfelder in den Tempban-Daten")
-                        await message.nack(requeue=True)
+                        await message.nack(requeue(True))
                         continue
 
                     for api_client in api_clients:
@@ -237,7 +234,7 @@ async def consume_tempban_messages(connection, channel, queue, api_clients):
                     await message.nack(requeue=True)
                 except Exception as e:
                     logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
-                    await message.nack(requeue=True)
+                    await message.nack(requeue(True))
 
 async def connect_to_watchlist_rabbitmq(client_id):
     logging.info(f"Versuche, eine Verbindung zu RabbitMQ für Watchlist-Nachrichten herzustellen für Client {client_id}...")
@@ -265,9 +262,16 @@ async def consume_watchlist_messages(connection, channel, queue, api_clients):
                 player_name = watchlist_data.get('player_name', watchlist_data.get('player'))
                 player_id = watchlist_data.get('player_id', watchlist_data.get('steam_id_64'))
 
-                if not player_name or not player_id:
-                    logging.error("Fehlende erforderliche Datenfelder in den Watchlist-Daten")
-                    await message.nack(requeue=True)
+                # Überprüfung auf fehlende oder ungültige player_id
+                if not player_id:
+                    logging.error(f"Fehlendes 'player_id' in den Watchlist-Daten: {watchlist_data}")
+                    await message.nack(requeue=False)  # Nachricht nicht erneut in die Queue einreihen
+                    continue
+
+                # Überprüfung auf fehlende erforderliche Felder
+                if not player_name:
+                    logging.error(f"Fehlende erforderliche Datenfelder in den Watchlist-Daten: {watchlist_data}")
+                    await message.nack(requeue(False))
                     continue
 
                 for api_client in api_clients:
@@ -280,12 +284,10 @@ async def consume_watchlist_messages(connection, channel, queue, api_clients):
                 await message.ack()
             except json.JSONDecodeError:
                 logging.error("Fehler beim Parsen der JSON-Daten")
-                await message.nack(requeue=True)
+                await message.nack(requeue(True))
             except Exception as e:
                 logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
-                await message.nack(requeue=True)
-
-
+                await message.nack(requeue(True))
 
 async def connect_to_unwatch_rabbitmq(client_id):
     logging.info(f"Versuche, eine Verbindung zu RabbitMQ für Unwatch-Nachrichten herzustellen für Client {client_id}...")
@@ -313,9 +315,13 @@ async def consume_unwatch_messages(connection, channel, queue, api_clients):
                 player_name = unwatch_data.get('player_name', unwatch_data.get('player'))
                 player_id = unwatch_data.get('player_id', unwatch_data.get('steam_id_64'))
 
+                if not player_name:
+                    logging.error(f"Fehlendes 'player_name' in den Unwatch-Daten: {unwatch_data}")
+                if not player_id:
+                    logging.error(f"Fehlendes 'player_id' in den Unwatch-Daten: {unwatch_data}")
                 if not player_name or not player_id:
-                    logging.error("Fehlende erforderliche Datenfelder in den Unwatch-Daten")
-                    await message.nack(requeue=True)
+                    logging.error(f"Fehlende erforderliche Datenfelder in den Unwatch-Daten: {unwatch_data}")
+                    await message.nack(requeue(True))
                     continue
 
                 for api_client in api_clients:
@@ -328,12 +334,10 @@ async def consume_unwatch_messages(connection, channel, queue, api_clients):
                 await message.ack()
             except json.JSONDecodeError:
                 logging.error("Fehler beim Parsen der JSON-Daten")
-                await message.nack(requeue=True)
+                await message.nack(requeue(True))
             except Exception as e:
                 logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
-                await message.nack(requeue=True)
-
-
+                await message.nack(requeue(True))
 
 async def main():
     api_client = api_clients[0]
