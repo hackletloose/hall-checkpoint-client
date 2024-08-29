@@ -22,7 +22,7 @@ git clone https://github.com/bumseb1ene/ban-client.git
 2. Platziere die `ban-client.py` Datei auf deinem Server, wo sie ausgeführt werden soll.
 3. Konfiguriere deine Umgebungsvariablen entsprechend der `example.env` Datei. Benenne diese Datei in `.env` um und fülle sie mit deinen spezifischen Daten aus:
    - `API_BASE_URLS`: Die URLs der APIs, die Ban-Befehle empfangen.
-   - `BEARER_TOKEN`, `API_USER`, `API_PASS`: Authentifizierungsdaten für die APIs.
+   - `BEARER_TOKEN`: Authentifizierungsdaten für die APIs.
    - `RABBITMQ_USER`, `RABBITMQ_PASS`, `RABBITMQ_HOST`, `RABBITMQ_PORT`: Konfigurationsdaten für deine RabbitMQ-Verbindung.
 
 ## Ausführung

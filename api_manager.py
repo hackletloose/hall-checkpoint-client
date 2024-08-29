@@ -16,13 +16,12 @@ class APIClient:
         })
         self.api_version = "unknown"
 
-    def login(self, username, password):
-        url = f'{self.base_url}/api/login'
-        data = {'username': username, 'password': password}
-        response = self.session.post(url, json=data)
+    def version(self, username, password):
+        url = f'{self.base_url}/api/get_version'
+        response = self.session.get(url)
         if response.status_code != 200:
             return None
-        return response.json()
+        return response.json().get('version', 'unknown')
     
     def is_logged_in(self):
         check_url = f"{self.base_url}/api/is_logged_in"
