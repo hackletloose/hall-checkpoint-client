@@ -16,7 +16,7 @@ class APIClient:
         })
         self.api_version = "unknown"
 
-    def version(self, username, password):
+    def version(self):
         url = f'{self.base_url}/api/get_version'
         response = self.session.get(url)
         if response.status_code != 200:
