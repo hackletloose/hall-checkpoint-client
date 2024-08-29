@@ -33,11 +33,11 @@ api_clients = [APIClient(url.strip(), API_TOKEN) for url in BASE_URLS if url.str
 # Authentifizierung bei den API-Clients
 for api_client in api_clients:
     version = api_client.version()
-    if version == "":
+    if version == "unknown" or version == "":
         logging.warning("Konnte Version vom Community RCon nicht ermitteln.")
     else:
         logging.info(f"CRCon version for {api_client.base_url}: {version}")
-        api_client.api_version = version.get('version', 'unknown')
+        api_client.api_version = version
 
 async def get_api_version(api_client):
     return api_client.api_version
