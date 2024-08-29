@@ -2,9 +2,10 @@ FROM python:alpine
 
 WORKDIR /code
 
-RUN pip install aiohttp aio_pika python-dotenv
+RUN pip install requests aiohttp aio_pika python-dotenv
 
-COPY ./ban_client.py /code/ban_client.py
+COPY ./upstream/ /code/
 COPY ./entrypoint.sh /code/
+RUN chmod +x /code/entrypoint.sh
 
 ENTRYPOINT ["/code/entrypoint.sh"]
