@@ -21,41 +21,11 @@ logging.basicConfig(level=logging.INFO,
 load_dotenv()
 BASE_URLS = os.getenv('API_BASE_URLS').split(',')
 API_TOKEN = os.getenv('BEARER_TOKEN')
-YOUR_CLIENT_ID = os.getenv('CLIENT_ID')
+CLIENT_ID = os.getenv('CLIENT_ID')
 RABBITMQ_USER = os.getenv('RABBITMQ_USER')
 RABBITMQ_PASS = os.getenv('RABBITMQ_PASS')
 RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')
 RABBITMQ_PORT = int(os.getenv('RABBITMQ_PORT', '5672'))
-
-# API-Client-Instanzen erstellen
-api_clients = [APIClient(url.strip(), API_TOKEN) for url in BASE_URLS if url.strip()]
-
-# Authentifizierung bei den API-Clients
-for api_client in api_clients:
-    version = api_client.version()
-    if version == "unknown" or version == "":
-        logging.warning("Konnte Version vom Community RCon nicht ermitteln.")
-    else:
-        logging.info(f"CRCon version for {api_client.base_url}: {version}")
-        api_client.api_version = version
-
-async def get_api_version(api_client):
-    return api_client.api_version
-
-async def report_api_version(client_id, version):
-    url = "https://api.1bv.eu/update_client_version"
-    timestamp = datetime.datetime.utcnow().isoformat()
-    data = {
-        'client_id': client_id,
-        'api_version': version,
-        'timestamp': timestamp
-    }
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=data) as response:
-            if response.status == 200:
-                logging.info(f"API-Version {version} erfolgreich gemeldet für Client {client_id} mit Timestamp {timestamp}")
-            else:
-                logging.error(f"Fehler beim Melden der API-Version {version} für Client {client_id} mit Timestamp {timestamp}")
 
 async def connect_to_rabbitmq(client_id):
     logging.info(f"Versuche, eine Verbindung zu RabbitMQ herzustellen für Client {client_id}...")
@@ -371,21 +341,14 @@ async def consume_unwatch_messages(connection, channel, queue, api_clients):
                 await message.nack(requeue(True))
 
 async def main():
-    api_client = api_clients[0]
+	api_clients = [APIClient(url.strip(), API_TOKEN, CLIENT_ID) for url in BASE_URLS if url.strip()]
+
     try:
-        client_id = YOUR_CLIENT_ID
-        version = await get_api_version(api_client)
-        logging.info(f"API Version: {version}")
-
-        # API-Version an den Server melden
-        await report_api_version(client_id, version)
-
-        # Restlicher Code zum Verbinden mit RabbitMQ und Verarbeiten von Nachrichten
-        ban_connection, ban_channel, ban_queue = await connect_to_rabbitmq(client_id)
-        unban_connection, unban_channel, unban_queue = await connect_to_unban_rabbitmq(client_id)
-        tempban_connection, tempban_channel, tempban_queue = await connect_to_tempban_rabbitmq(client_id)
-        watchlist_connection, watchlist_channel, watchlist_queue = await connect_to_watchlist_rabbitmq(client_id)
-        unwatch_connection, unwatch_channel, unwatch_queue = await connect_to_unwatch_rabbitmq(client_id)
+        ban_connection, ban_channel, ban_queue = await connect_to_rabbitmq(CLIENT_ID)
+        unban_connection, unban_channel, unban_queue = await connect_to_unban_rabbitmq(CLIENT_ID)
+        tempban_connection, tempban_channel, tempban_queue = await connect_to_tempban_rabbitmq(CLIENT_ID)
+        watchlist_connection, watchlist_channel, watchlist_queue = await connect_to_watchlist_rabbitmq(CLIENT_ID)
+        unwatch_connection, unwatch_channel, unwatch_queue = await connect_to_unwatch_rabbitmq(CLIENT_ID)
 
         task_consume_ban = asyncio.create_task(consume_messages(ban_connection, ban_channel, ban_queue, api_clients))
         task_consume_unban = asyncio.create_task(consume_unban_messages(unban_connection, unban_channel, unban_queue, api_clients))
