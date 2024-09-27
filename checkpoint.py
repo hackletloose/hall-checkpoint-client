@@ -92,7 +92,7 @@ async def consume_messages(connection, channel, queue, api_clients):
                     logging.error(f"Fehlendes 'player_id' in den Ban-Daten: {ban_data}")
                     await message.nack(requeue=False)
                     continue
-                
+
                 # Verarbeite den Bann für jeden API-Client
                 for api_client in api_clients:
                     version = api_client.api_version
@@ -147,7 +147,7 @@ async def consume_unban_messages(connection, channel, queue, api_clients):
             try:
                 unban_data = json.loads(message.body.decode())
                 logging.info(f"Empfangene Unban-Daten: {unban_data}")
-                
+
                 player_name = unban_data.get('player_name', unban_data.get('player'))
                 player_id = unban_data.get('player_id', unban_data.get('steam_id_64'))
 
@@ -162,7 +162,7 @@ async def consume_unban_messages(connection, channel, queue, api_clients):
                 for api_client in api_clients:
                     version = api_client.api_version
                     logging.info(f"Verarbeite Unban für API-Client: {api_client.base_url}")
-                    
+
                     if api_client.do_unban(player_id):
                         logging.info(f"Unban erfolgreich für Player ID: {player_id}")
                     else:
@@ -184,26 +184,26 @@ async def consume_unban_messages(connection, channel, queue, api_clients):
 async def connect_to_tempban_rabbitmq(client_id):
     try:
         logging.info(f"Versuche, eine Verbindung zu RabbitMQ für Tempban-Nachrichten herzustellen für Client {client_id}...")
-        
+
         tempban_connection = await aio_pika.connect_robust(
             f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASS}@{RABBITMQ_HOST}:{RABBITMQ_PORT}/",
             loop=asyncio.get_running_loop(),
             heartbeat=600,
             client_properties={'connection_name': f'tempban_connection_{client_id}'}
         )
-        
+
         tempban_channel = await tempban_connection.channel()
         exchange_name = f'tempbans_fanout_{client_id}'
-        
+
         tempban_exchange = await tempban_channel.declare_exchange(exchange_name, ExchangeType.FANOUT, durable=True)
         queue_name = f'tempbans_queue_{client_id}'
         tempban_queue = await tempban_channel.declare_queue(queue_name, durable=True)
-        
+
         await tempban_queue.bind(tempban_exchange, routing_key='')
         logging.info(f"RabbitMQ Queue {queue_name} deklariert und gebunden.")
-        
+
         return tempban_connection, tempban_channel, tempban_queue
-    
+
     except Exception as e:
         logging.error(f"Fehler beim Verbinden mit RabbitMQ für Tempban-Nachrichten: {e}")
         raise  # Optional: Weiterleiten des Fehlers oder Versuch eines erneuten Verbindungsaufbaus
@@ -217,7 +217,7 @@ async def consume_tempban_messages(connection, channel, queue, api_clients):
                 try:
                     ban_data = json.loads(message.body.decode())
                     logging.info(f"Empfangene Tempban-Daten: {ban_data}")
-                    
+
                     # Dynamische Zuordnung von player_id und player_name basierend auf der API-Version
                     player_name = ban_data.get('player_name') or ban_data.get('player')
                     player_id = ban_data.get('player_id') or ban_data.get('steam_id_64')
@@ -233,7 +233,7 @@ async def consume_tempban_messages(connection, channel, queue, api_clients):
                     for api_client in api_clients:
                         version = api_client.api_version
                         duration_hours = ban_data.get('duration_hours', 24)  # Default to 24 hours if not provided
-                        
+
                         if api_client.do_temp_ban(player_name, player_id, duration_hours, ban_data['reason'], ban_data['by']):
                             logging.info(f"Tempban erfolgreich für Steam ID: {player_id}")
                         else:

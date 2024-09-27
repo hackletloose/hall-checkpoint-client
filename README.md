@@ -1,6 +1,4 @@
-# Ban-Client für Hack Let Loose
-
-## Überblick
+# [HaLL] Checkpoint – Ban-Client für Hack Let Loose
 Dieses Skript ist Teil des "Hack Let Loose"-Systems, das darauf ausgelegt ist, die Durchsetzung von Bans auf verschiedenen verbundenen Servern von "Hell Let Loose" zu automatisieren. Es empfängt Ban-Informationen, die durch das "Hack Let Loose"-Netzwerk geteilt werden, und führt diese auf dem lokalen Server aus.
 
 ## Voraussetzungen
@@ -15,12 +13,11 @@ pip install aiohttp aio_pika python-dotenv
 ```
 
 ## Installation
+1. Gehe an den Ort auf deinem Server, an dem der Checkpoint Client in Zukunft ausgeführt werden soll.
 1. Klone dieses Repository oder lade die neueste Version des Skripts direkt herunter.
-```bash
-git clone https://github.com/bumseb1ene/ban-client.git
-```
-2. Platziere die `ban-client.py` Datei auf deinem Server, wo sie ausgeführt werden soll.
-3. Konfiguriere deine Umgebungsvariablen entsprechend der `example.env` Datei. Benenne diese Datei in `.env` um und fülle sie mit deinen spezifischen Daten aus:
+
+   `git clone https://github.com/hackletloose/hall-checkpoint-client.git`
+1. Konfiguriere deine Umgebungsvariablen entsprechend der `.env.dist` Datei. Benenne diese Datei in `.env` um und fülle sie mit deinen spezifischen Daten aus:
    - `API_BASE_URLS`: Die URLs der APIs, die Ban-Befehle empfangen.
    - `BEARER_TOKEN`: Authentifizierungsdaten für die APIs.
    - `RABBITMQ_USER`, `RABBITMQ_PASS`, `RABBITMQ_HOST`, `RABBITMQ_PORT`: Konfigurationsdaten für deine RabbitMQ-Verbindung.
@@ -28,44 +25,24 @@ git clone https://github.com/bumseb1ene/ban-client.git
 ## Ausführung
 Um das Skript manuell zu starten, führe folgenden Befehl im Terminal aus:
 ```bash
-python3 ban-client.py
+python3 checkpoint.py
 ```
 
 ## Dauerhafte Ausführung über systemd
 Um den Ban-Client dauerhaft auf deinem Server laufen zu lassen, kannst du einen systemd Service erstellen:
 
-1. Erstelle eine neue systemd Service-Datei:
-```bash
-sudo nano /etc/systemd/system/ban-client.service
-```
+1. Kopiere die systemd Service-Datei:
 
-2. Füge folgenden Inhalt hinzu:
-```ini
-[Unit]
-Description=Ban Client Service for Hack Let Loose
-After=network.target
+   `sudo cp ./checkpoint.service.dist /etc/systemd/system/checkpoint.service`
+1. Ersetze `<dein-benutzername>` und `/pfad/zu/deinem/hall-checkpoint-client` durch deine tatsächlichen Benutzer- und Pfadangaben.
+1. Aktiviere und starte den Service: 
 
-[Service]
-User=<dein-benutzername>
-WorkingDirectory=/pfad/zu/deinem/ban-client
-ExecStart=/usr/bin/python3 /pfad/zu/deinem/ban-client/ban-client.py
-Restart=always
+   `sudo systemctl enable checkpoint.service`
 
-[Install]
-WantedBy=multi-user.target
-```
-Ersetze `<dein-benutzername>` und `/pfad/zu/deinem/ban-client` durch deine tatsächlichen Benutzer- und Pfadangaben.
+   `sudo systemctl start checkpoint.service`
+1. Überprüfe den Status des Services:
 
-3. Aktiviere und starte den Service:
-```bash
-sudo systemctl enable ban-client.service
-sudo systemctl start ban-client.service
-```
-
-4. Überprüfe den Status des Services:
-```bash
-sudo systemctl status ban-client.service
-```
+   sudo systemctl status checkpoint.service
 
 ## Support
-Bei Fragen oder Problemen mit der Installation oder Konfiguration kontaktiere uns bitte über unser Discord!
+Bei Fragen oder Problemen mit der Installation oder Konfiguration kontaktiere uns bitte über unser [Discord](https://discord.gg/hackletloose)!

@@ -1,0 +1,12 @@
+[Unit]
+Description=Checkpoint – Ban Client Service for Hack Let Loose
+After=network.target
+
+[Service]
+User=<dein-benutzername>
+WorkingDirectory=/pfad/zu/deinem/hall-checkpoint-client
+ExecStart=/usr/bin/python3 /pfad/zu/deinem/hall-checkpoint-client/checkpoint.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
