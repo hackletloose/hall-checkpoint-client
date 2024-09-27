@@ -21,8 +21,6 @@ logging.basicConfig(level=logging.INFO,
 load_dotenv()
 BASE_URLS = os.getenv('API_BASE_URLS').split(',')
 API_TOKEN = os.getenv('BEARER_TOKEN')
-API_USER = os.getenv('API_USER')
-API_PASS = os.getenv('API_PASS')
 YOUR_CLIENT_ID = os.getenv('CLIENT_ID')
 RABBITMQ_USER = os.getenv('RABBITMQ_USER')
 RABBITMQ_PASS = os.getenv('RABBITMQ_PASS')
@@ -34,13 +32,12 @@ api_clients = [APIClient(url.strip(), API_TOKEN) for url in BASE_URLS if url.str
 
 # Authentifizierung bei den API-Clients
 for api_client in api_clients:
-    login_response = api_client.login(API_USER, API_PASS)
-    if login_response and login_response.get('result'):
-        logging.info(f"Erfolgreich bei der API angemeldet für URL: {api_client.base_url}. Antwort: {login_response}")
-        api_client.api_version = login_response.get('version', 'unknown')
+    version = api_client.version()
+    if version == "unknown" or version == "":
+        logging.warning("Konnte Version vom Community RCon nicht ermitteln.")
     else:
-        logging.error(f"Fehler bei der Anmeldung an der API für URL: {api_client.base_url}")
-        raise Exception(f"Fehler bei der Anmeldung an der API für URL: {api_client.base_url}")
+        logging.info(f"CRCon version for {api_client.base_url}: {version}")
+        api_client.api_version = version
 
 async def get_api_version(api_client):
     return api_client.api_version
