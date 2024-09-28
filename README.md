@@ -7,15 +7,12 @@ Bevor du den Ban-Client installierst, stelle sicher, dass du folgende Voraussetz
 - `aiohttp` und `aio_pika` Bibliotheken
 - `python-dotenv` Bibliothek
 
-Diese Abhängigkeiten kannst du über pip installieren:
-```bash
-pip install aiohttp aio_pika python-dotenv
-```
+Diese Abhängigkeiten kannst du über pip installieren:\
+`pip install aiohttp aio_pika python-dotenv`
 
 ## Installation
 1. Gehe an den Ort auf deinem Server, an dem der Checkpoint Client in Zukunft ausgeführt werden soll.
-1. Klone dieses Repository oder lade die neueste Version des Skripts direkt herunter.
-
+1. Klone dieses Repository oder lade die neueste Version des Skripts direkt herunter.\
    `git clone https://github.com/hackletloose/hall-checkpoint-client.git`
 1. Konfiguriere deine Umgebungsvariablen entsprechend der `.env.dist` Datei. Benenne diese Datei in `.env` um und fülle sie mit deinen spezifischen Daten aus:
    - `API_BASE_URLS`: Die URLs der APIs, die Ban-Befehle empfangen.
@@ -23,26 +20,20 @@ pip install aiohttp aio_pika python-dotenv
    - `RABBITMQ_USER`, `RABBITMQ_PASS`, `RABBITMQ_HOST`, `RABBITMQ_PORT`: Konfigurationsdaten für deine RabbitMQ-Verbindung.
 
 ## Ausführung
-Um das Skript manuell zu starten, führe folgenden Befehl im Terminal aus:
-```bash
-python3 checkpoint.py
-```
+Um das Skript manuell zu starten, führe folgenden Befehl im Terminal aus:\
+`python3 checkpoint.py`
 
 ## Dauerhafte Ausführung über systemd
 Um den Ban-Client dauerhaft auf deinem Server laufen zu lassen, kannst du einen systemd Service erstellen:
 
-1. Kopiere die systemd Service-Datei:
-
+1. Kopiere die systemd Service-Datei:\
    `sudo cp ./checkpoint.service.dist /etc/systemd/system/checkpoint.service`
 1. Ersetze `<dein-benutzername>` und `/pfad/zu/deinem/hall-checkpoint-client` durch deine tatsächlichen Benutzer- und Pfadangaben.
-1. Aktiviere und starte den Service: 
-
-   `sudo systemctl enable checkpoint.service`
-
+1. Aktiviere und starte den Service:\
+   `sudo systemctl enable checkpoint.service`\
    `sudo systemctl start checkpoint.service`
-1. Überprüfe den Status des Services:
-
-   sudo systemctl status checkpoint.service
+1. Überprüfe den Status des Services:\
+   `sudo systemctl status checkpoint.service`
 
 ## Support
 Bei Fragen oder Problemen mit der Installation oder Konfiguration kontaktiere uns bitte über unser [Discord](https://discord.gg/hackletloose)!
