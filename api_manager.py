@@ -6,7 +6,7 @@ import aiohttp
 import logging
 
 class APIClient:
-    def __init__(self, base_url, api_token):
+    def __init__(self, base_url, api_token, client_id):
         self.base_url = base_url
         self.session = requests.Session()
         self.session.headers.update({
@@ -14,14 +14,24 @@ class APIClient:
             "Connection": "keep-alive",
             "Content-Type": "application/json"
         })
-        self.api_version = "unknown"
+        self.api_version = api_client.version()
+        self.report_api_version(client_id)
 
     def version(self):
         url = f'{self.base_url}/api/get_version'
         response = self.session.get(url)
-        if response.status_code != 200:
-            return None
-        return response.json().get('version', 'unknown')
+        if response.status_code == 200:
+            version = response.json().get('version', 'unknown')
+            if version == "":
+                logging.warning('Konnte Version vom Community RCon nicht ermitteln (empty version).')
+                return 'unknown'
+
+            self.api_version = version
+            logging.info(f"CRCON version for {api_client.base_url}: {self.api_version}")
+            return version
+
+        logging.warning('Konnte Version vom CRCON nicht ermitteln (failed request).')
+        return 'unknown'
     
     def is_logged_in(self):
         check_url = f"{self.base_url}/api/is_logged_in"
@@ -219,19 +229,17 @@ class APIClient:
             print(f"Fehler beim Aufrufen von post_player_comment: {e}")
             return False
 
-
-    async def report_api_version(client_id, version):
-        url = "https://api.1bv.eu/update_client_version"  # Überprüfen Sie diese URL
+    async def report_api_version(client_id):
+        url = "https://api.hackletloose.eu/update_client_version"
+        timestamp = datetime.datetime.utcnow().isoformat()
         data = {
             'client_id': client_id,
-            'api_version': version
+            'api_version': self.api_version,
+            'timestamp': timestamp
         }
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=data) as response:
-                response_text = await response.text()
                 if response.status == 200:
-                    logging.info(f"API-Version {version} erfolgreich gemeldet für Client {client_id}")
+                    logging.info(f"API-Version {self.api_version} erfolgreich gemeldet für Client {client_id} mit Timestamp {timestamp}")
                 else:
-                    logging.error(f"Fehler beim Melden der API-Version {version} für Client {client_id}")
-                    logging.error(f"Antwort vom Server: {response_text}")
-
+                    logging.error(f"Fehler beim Melden der API-Version {self.api_version} für Client {client_id} mit Timestamp {timestamp}")
