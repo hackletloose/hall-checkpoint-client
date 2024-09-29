@@ -14,7 +14,7 @@ class APIClient:
             "Connection": "keep-alive",
             "Content-Type": "application/json"
         })
-        self.api_version = api_client.version()
+        self.api_version = self.version()
         self.report_api_version(client_id)
 
     def version(self):
@@ -27,7 +27,7 @@ class APIClient:
                 return 'unknown'
 
             self.api_version = version
-            logging.info(f"CRCON version for {api_client.base_url}: {self.api_version}")
+            logging.info(f"CRCON version for {self.base_url}: {self.api_version}")
             return version
 
         logging.warning('Konnte Version vom CRCON nicht ermitteln (failed request).')
@@ -229,7 +229,7 @@ class APIClient:
             print(f"Fehler beim Aufrufen von post_player_comment: {e}")
             return False
 
-    async def report_api_version(client_id):
+    async def report_api_version(self, client_id):
         url = "https://api.hackletloose.eu/update_client_version"
         timestamp = datetime.datetime.utcnow().isoformat()
         data = {
