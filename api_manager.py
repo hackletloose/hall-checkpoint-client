@@ -20,18 +20,18 @@ class APIClient:
     def version(self):
         url = f'{self.base_url}/api/get_version'
         response = self.session.get(url)
-		if response.status_code == 200:
-			version = response.json().get('version', 'unknown')
-			if version == "":
-				logging.warning('Konnte Version vom Community RCon nicht ermitteln (empty version).')
-				return 'unknown'
+        if response.status_code == 200:
+            version = response.json().get('version', 'unknown')
+            if version == "":
+                logging.warning('Konnte Version vom Community RCon nicht ermitteln (empty version).')
+                return 'unknown'
 
-			self.api_version = version
-			logging.info(f"CRCON version for {api_client.base_url}: {self.api_version}")
-			return version
+            self.api_version = version
+            logging.info(f"CRCON version for {api_client.base_url}: {self.api_version}")
+            return version
 
-		logging.warning('Konnte Version vom CRCON nicht ermitteln (failed request).')
-		return 'unknown'
+        logging.warning('Konnte Version vom CRCON nicht ermitteln (failed request).')
+        return 'unknown'
     
     def is_logged_in(self):
         check_url = f"{self.base_url}/api/is_logged_in"

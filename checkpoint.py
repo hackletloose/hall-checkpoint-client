@@ -341,7 +341,7 @@ async def consume_unwatch_messages(connection, channel, queue, api_clients):
                 await message.nack(requeue(True))
 
 async def main():
-	api_clients = [APIClient(url.strip(), API_TOKEN, CLIENT_ID) for url in BASE_URLS if url.strip()]
+    api_clients = [APIClient(url.strip(), API_TOKEN, CLIENT_ID) for url in BASE_URLS if url.strip()]
 
     try:
         ban_connection, ban_channel, ban_queue = await connect_to_rabbitmq(CLIENT_ID)
