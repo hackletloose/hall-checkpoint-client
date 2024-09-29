@@ -229,7 +229,7 @@ class APIClient:
             print(f"Fehler beim Aufrufen von post_player_comment: {e}")
             return False
 
-    async def report_api_version(self, client_id):
+    def report_api_version(self, client_id):
         url = "https://api.hackletloose.eu/update_client_version"
         timestamp = datetime.datetime.utcnow().isoformat()
         data = {
