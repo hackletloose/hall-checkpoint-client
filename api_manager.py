@@ -2,7 +2,6 @@ import requests
 import os
 from dotenv import load_dotenv
 import datetime
-import aiohttp
 import logging
 
 class APIClient:
@@ -237,9 +236,11 @@ class APIClient:
             'api_version': self.api_version,
             'timestamp': timestamp
         }
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=data) as response:
-                if response.status == 200:
-                    logging.info(f"API-Version {self.api_version} erfolgreich gemeldet für Client {client_id} mit Timestamp {timestamp}")
-                else:
-                    logging.error(f"Fehler beim Melden der API-Version {self.api_version} für Client {client_id} mit Timestamp {timestamp}")
+        try:
+            response = requests.post(url, json=data)
+            if response.status_code == 200:
+                logging.info(f"API-Version {self.api_version} erfolgreich gemeldet für Client {client_id} mit Timestamp {timestamp}")
+            else:
+                logging.error(f"Fehler beim Melden der API-Version {self.api_version} für Client {client_id} mit Timestamp {timestamp}")
+        except Exception as e:
+            logging.error(f"Fehler beim Melden der API-Version: {e}")
