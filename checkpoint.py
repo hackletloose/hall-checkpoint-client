@@ -43,57 +43,62 @@ async def connect_to_rabbitmq(client_id):
 
 async def consume_messages(connection, channel, queue, api_clients):
     logging.info("Beginne mit dem Empfang von Nachrichten...")
-    async with connection, aiohttp.ClientSession() as session:
-        async for message in queue:
-            logging.info(f"Nachricht empfangen, beginne Verarbeitung: {message.body.decode()[:100]}")
-            try:
-                ban_data = json.loads(message.body.decode())
-                logging.info(f"Empfangene Ban-Daten: {ban_data}")
+    try:
+        async with connection, aiohttp.ClientSession() as session:
+            async for message in queue:
+                logging.info(f"Nachricht empfangen, beginne Verarbeitung: {message.body.decode()[:100]}")
+                try:
+                    ban_data = json.loads(message.body.decode())
+                    logging.info(f"Empfangene Ban-Daten: {ban_data}")
 
-                player_name = ban_data.get('player_name', ban_data.get('player'))
-                player_id = ban_data.get('player_id', ban_data.get('steam_id_64'))
+                    player_name = ban_data.get('player_name', ban_data.get('player'))
+                    player_id = ban_data.get('player_id', ban_data.get('steam_id_64'))
 
-                # Überprüfen auf fehlende oder ungültige Daten
-                if not player_name:
-                    logging.error(f"Fehlendes 'player_name' in den Ban-Daten: {ban_data}")
+                    # Überprüfen auf fehlende oder ungültige Daten
+                    if not player_name:
+                        logging.error(f"Fehlendes 'player_name' in den Ban-Daten: {ban_data}")
+                        await message.nack(requeue=False)
+                        continue
+                    if not player_id:
+                        logging.error(f"Fehlendes 'player_id' in den Ban-Daten: {ban_data}")
+                        await message.nack(requeue=False)
+                        continue
+
+                    # Verarbeite den Bann für jeden API-Client
+                    for api_client in api_clients:
+                        version = api_client.api_version
+                        steam_id = player_id  # In allen Versionen wird jetzt die korrekte steam_id verwendet
+
+                        # Permanent-Ban durchführen
+                        if api_client.do_perma_ban(player_name, steam_id, ban_data['reason'], ban_data['by']):
+                            logging.info(f"Permanent-Bann erfolgreich für Steam ID: {steam_id}")
+                        else:
+                            logging.error(f"Permanent-Bann fehlgeschlagen für Steam ID: {steam_id}")
+
+                        # Kommentar posten
+                        comment_message = f"Ban Detail: https://hackletloose.eu/ban_detail.php?steam_id={steam_id}"
+                        if api_client.post_player_comment(steam_id, comment_message):
+                            logging.info(f"Erfolgreich Kommentar gepostet für Steam ID: {steam_id}")
+                        else:
+                            logging.error(f"Fehler beim Posten des Kommentars für Steam ID: {steam_id}. Kommentar: {comment_message}")
+
+                        # Spieler auf die Blacklist setzen
+                        if api_client.do_blacklist_player(steam_id, player_name, ban_data['reason'], ban_data['by']):
+                            logging.info(f"Spieler erfolgreich auf die Blacklist gesetzt: {steam_id}")
+                        else:
+                            logging.error(f"Fehler beim Setzen auf die Blacklist für Steam ID: {steam_id}")
+
+                    await message.ack()
+                except json.JSONDecodeError:
+                    logging.error("Fehler beim Parsen der JSON-Daten")
                     await message.nack(requeue=False)
-                    continue
-                if not player_id:
-                    logging.error(f"Fehlendes 'player_id' in den Ban-Daten: {ban_data}")
+                except Exception as e:
+                    logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
                     await message.nack(requeue=False)
-                    continue
-
-                # Verarbeite den Bann für jeden API-Client
-                for api_client in api_clients:
-                    version = api_client.api_version
-                    steam_id = player_id  # In allen Versionen wird jetzt die korrekte steam_id verwendet
-
-                    # Permanent-Ban durchführen
-                    if api_client.do_perma_ban(player_name, steam_id, ban_data['reason'], ban_data['by']):
-                        logging.info(f"Permanent-Bann erfolgreich für Steam ID: {steam_id}")
-                    else:
-                        logging.error(f"Permanent-Bann fehlgeschlagen für Steam ID: {steam_id}")
-
-                    # Kommentar posten
-                    comment_message = f"Ban Detail: https://hackletloose.eu/ban_detail.php?steam_id={steam_id}"
-                    if api_client.post_player_comment(steam_id, comment_message):
-                        logging.info(f"Erfolgreich Kommentar gepostet für Steam ID: {steam_id}")
-                    else:
-                        logging.error(f"Fehler beim Posten des Kommentars für Steam ID: {steam_id}. Kommentar: {comment_message}")
-
-                    # Spieler auf die Blacklist setzen
-                    if api_client.do_blacklist_player(steam_id, player_name, ban_data['reason'], ban_data['by']):
-                        logging.info(f"Spieler erfolgreich auf die Blacklist gesetzt: {steam_id}")
-                    else:
-                        logging.error(f"Fehler beim Setzen auf die Blacklist für Steam ID: {steam_id}")
-
-                await message.ack()
-            except json.JSONDecodeError:
-                logging.error("Fehler beim Parsen der JSON-Daten")
-                await message.nack(requeue=False)
-            except Exception as e:
-                logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
-                await message.nack(requeue=False)
+    except asyncio.CancelledError:
+        logging.info("Task consume_messages wurde abgebrochen.")
+    except Exception as e:
+        logging.error(f"Unerwarteter Fehler in consume_messages: {e}")
 
 async def connect_to_unban_rabbitmq(client_id):
     logging.info(f"Versuche, eine Verbindung zu RabbitMQ für Unban-Nachrichten herzustellen für Client {client_id}...")
@@ -111,45 +116,50 @@ async def connect_to_unban_rabbitmq(client_id):
 
 async def consume_unban_messages(connection, channel, queue, api_clients):
     logging.info("Beginne mit dem Empfang von Unban-Nachrichten...")
-    async with connection, aiohttp.ClientSession() as session:
-        async for message in queue:
-            logging.info(f"Unban-Nachricht empfangen, beginne Verarbeitung: {message.body.decode()[:100]}")
-            try:
-                unban_data = json.loads(message.body.decode())
-                logging.info(f"Empfangene Unban-Daten: {unban_data}")
+    try:
+        async with connection, aiohttp.ClientSession() as session:
+            async for message in queue:
+                logging.info(f"Unban-Nachricht empfangen, beginne Verarbeitung: {message.body.decode()[:100]}")
+                try:
+                    unban_data = json.loads(message.body.decode())
+                    logging.info(f"Empfangene Unban-Daten: {unban_data}")
 
-                player_name = unban_data.get('player_name', unban_data.get('player'))
-                player_id = unban_data.get('player_id', unban_data.get('steam_id_64'))
+                    player_name = unban_data.get('player_name', unban_data.get('player'))
+                    player_id = unban_data.get('player_id', unban_data.get('steam_id_64'))
 
-                if not player_name:
-                    logging.error(f"Fehlendes 'player_name' in den Unban-Daten: {unban_data}")
-                if not player_id:
-                    logging.error(f"Fehlendes 'player_id' in den Unban-Daten: {unban_data}")
-                if not player_name or not player_id:
+                    if not player_name:
+                        logging.error(f"Fehlendes 'player_name' in den Unban-Daten: {unban_data}")
+                    if not player_id:
+                        logging.error(f"Fehlendes 'player_id' in den Unban-Daten: {unban_data}")
+                    if not player_name or not player_id:
+                        await message.nack(requeue=True)
+                        continue
+
+                    for api_client in api_clients:
+                        version = api_client.api_version
+                        logging.info(f"Verarbeite Unban für API-Client: {api_client.base_url}")
+
+                        if api_client.do_unban(player_id):
+                            logging.info(f"Unban erfolgreich für Player ID: {player_id}")
+                        else:
+                            logging.error(f"Unban-Vorgang fehlgeschlagen für Player ID: {player_id}")
+
+                        logging.info(f"Versuche, den Spieler von der Blacklist zu entfernen: Player ID: {player_id}")
+                        if api_client.unblacklist_player(player_id):
+                            logging.info(f"Spieler erfolgreich von der Blacklist entfernt: Player ID: {player_id}")
+                        else:
+                            logging.error(f"Unblacklist-Vorgang fehlgeschlagen für Player ID: {player_id}")
+                    await message.ack()
+                except json.JSONDecodeError:
+                    logging.error("Fehler beim Parsen der JSON-Daten")
                     await message.nack(requeue=True)
-                    continue
-
-                for api_client in api_clients:
-                    version = api_client.api_version
-                    logging.info(f"Verarbeite Unban für API-Client: {api_client.base_url}")
-
-                    if api_client.do_unban(player_id):
-                        logging.info(f"Unban erfolgreich für Player ID: {player_id}")
-                    else:
-                        logging.error(f"Unban-Vorgang fehlgeschlagen für Player ID: {player_id}")
-
-                    logging.info(f"Versuche, den Spieler von der Blacklist zu entfernen: Player ID: {player_id}")
-                    if api_client.unblacklist_player(player_id):
-                        logging.info(f"Spieler erfolgreich von der Blacklist entfernt: Player ID: {player_id}")
-                    else:
-                        logging.error(f"Unblacklist-Vorgang fehlgeschlagen für Player ID: {player_id}")
-                await message.ack()
-            except json.JSONDecodeError:
-                logging.error("Fehler beim Parsen der JSON-Daten")
-                await message.nack(requeue=True)
-            except Exception as e:
-                logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
-                await message.nack(requeue=True)
+                except Exception as e:
+                    logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
+                    await message.nack(requeue=True)
+    except asyncio.CancelledError:
+        logging.info("Task consume_unban_messages wurde abgebrochen.")
+    except Exception as e:
+        logging.error(f"Unerwarteter Fehler in consume_unban_messages: {e}")
 
 async def connect_to_tempban_rabbitmq(client_id):
     try:
@@ -180,40 +190,45 @@ async def connect_to_tempban_rabbitmq(client_id):
 
 async def consume_tempban_messages(connection, channel, queue, api_clients):
     logging.info("Beginne mit dem Empfang von Tempban-Nachrichten...")
-    async with connection, aiohttp.ClientSession() as session:
-        async for message in queue:
-            logging.info(f"Tempban-Nachricht empfangen, beginne Verarbeitung: {message.body.decode()[:100]}")
-            async with message.process():
-                try:
-                    ban_data = json.loads(message.body.decode())
-                    logging.info(f"Empfangene Tempban-Daten: {ban_data}")
+    try:
+        async with connection, aiohttp.ClientSession() as session:
+            async for message in queue:
+                logging.info(f"Tempban-Nachricht empfangen, beginne Verarbeitung: {message.body.decode()[:100]}")
+                async with message.process():
+                    try:
+                        ban_data = json.loads(message.body.decode())
+                        logging.info(f"Empfangene Tempban-Daten: {ban_data}")
 
-                    # Dynamische Zuordnung von player_id und player_name basierend auf der API-Version
-                    player_name = ban_data.get('player_name') or ban_data.get('player')
-                    player_id = ban_data.get('player_id') or ban_data.get('steam_id_64')
+                        # Dynamische Zuordnung von player_id und player_name basierend auf der API-Version
+                        player_name = ban_data.get('player_name') or ban_data.get('player')
+                        player_id = ban_data.get('player_id') or ban_data.get('steam_id_64')
 
-                    if not player_name:
-                        logging.error(f"Fehlendes 'player_name' in den Tempban-Daten: {ban_data}")
-                    if not player_id:
-                        logging.error(f"Fehlendes 'player_id' in den Tempban-Daten: {ban_data}")
-                    if not player_name or not player_id:
+                        if not player_name:
+                            logging.error(f"Fehlendes 'player_name' in den Tempban-Daten: {ban_data}")
+                        if not player_id:
+                            logging.error(f"Fehlendes 'player_id' in den Tempban-Daten: {ban_data}")
+                        if not player_name or not player_id:
+                            await message.nack(requeue=True)
+                            continue
+
+                        for api_client in api_clients:
+                            version = api_client.api_version
+                            duration_hours = ban_data.get('duration_hours', 24)  # Default to 24 hours if not provided
+
+                            if api_client.do_temp_ban(player_name, player_id, duration_hours, ban_data['reason'], ban_data['by']):
+                                logging.info(f"Tempban erfolgreich für Steam ID: {player_id}")
+                            else:
+                                logging.error(f"Tempban-Vorgang fehlgeschlagen für Steam ID: {player_id}")
+                    except json.JSONDecodeError:
+                        logging.error("Fehler beim Parsen der JSON-Daten")
                         await message.nack(requeue=True)
-                        continue
-
-                    for api_client in api_clients:
-                        version = api_client.api_version
-                        duration_hours = ban_data.get('duration_hours', 24)  # Default to 24 hours if not provided
-
-                        if api_client.do_temp_ban(player_name, player_id, duration_hours, ban_data['reason'], ban_data['by']):
-                            logging.info(f"Tempban erfolgreich für Steam ID: {player_id}")
-                        else:
-                            logging.error(f"Tempban-Vorgang fehlgeschlagen für Steam ID: {player_id}")
-                except json.JSONDecodeError:
-                    logging.error("Fehler beim Parsen der JSON-Daten")
-                    await message.nack(requeue=True)
-                except Exception as e:
-                    logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
-                    await message.nack(requeue=True)
+                    except Exception as e:
+                        logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
+                        await message.nack(requeue=True)
+    except asyncio.CancelledError:
+        logging.info("Task consume_tempban_messages wurde abgebrochen.")
+    except Exception as e:
+        logging.error(f"Unerwarteter Fehler in consume_tempban_messages: {e}")
 
 async def connect_to_watchlist_rabbitmq(client_id):
     logging.info(f"Versuche, eine Verbindung zu RabbitMQ für Watchlist-Nachrichten herzustellen für Client {client_id}...")
@@ -231,64 +246,69 @@ async def connect_to_watchlist_rabbitmq(client_id):
 
 async def consume_watchlist_messages(connection, channel, queue, api_clients):
     logging.info("Beginne mit dem Empfang von Watchlist-Nachrichten...")
-    async with connection, aiohttp.ClientSession() as session:
-        async for message in queue:
-            logging.info(f"Watchlist-Nachricht empfangen, beginne Verarbeitung: {message.body.decode()[:100]}")
-            try:
-                watchlist_data = json.loads(message.body.decode())
-                logging.info(f"Empfangene Watchlist-Daten: {watchlist_data}")
-
-                processed = False  # Flag to track if the message has been processed
-
-                # Iteriere über die API-Clients, um die Nachricht an den richtigen API-Client zu senden
-                for api_client in api_clients:
-                    version = api_client.api_version
-
-                    if version.startswith("v10"):
-                        # v10 API verwendet player_name und player_id
-                        player_name = watchlist_data.get('player_name')
-                        player_id = watchlist_data.get('player_id')
-                    else:
-                        # v9.x API verwendet player und steam_id_64
-                        player_name = watchlist_data.get('player')
-                        player_id = watchlist_data.get('steam_id_64')
-
-                    # Überprüfung auf fehlende oder ungültige player_id
-                    if not player_id:
-                        logging.error(f"Fehlendes 'player_id' oder 'steam_id_64' in den Watchlist-Daten: {watchlist_data}")
-                        break  # Verlassen der Schleife, um die Nachricht nicht weiter zu verarbeiten
-
-                    # Überprüfung auf fehlende erforderliche Felder
-                    if not player_name:
-                        logging.error(f"Fehlende erforderliche Datenfelder in den Watchlist-Daten: {watchlist_data}")
-                        break  # Verlassen der Schleife, um die Nachricht nicht weiter zu verarbeiten
-
-                    # Call the appropriate API method based on the client version
-                    if api_client.do_watch_player(player_name, player_id, watchlist_data['reason'], watchlist_data['by']):
-                        logging.info(f"Spieler erfolgreich zur Watchlist hinzugefügt: {player_id}")
-                        processed = True
-                    else:
-                        logging.error(f"Fehler beim Hinzufügen zur Watchlist für Player ID: {player_id}")
-                        break  # Nachricht nicht weiterverarbeiten
-
-                if processed:
-                    await message.ack()
-                else:
-                    await message.nack(requeue=False)
-
-            except json.JSONDecodeError:
-                logging.error("Fehler beim Parsen der JSON-Daten")
+    try:
+        async with connection, aiohttp.ClientSession() as session:
+            async for message in queue:
+                logging.info(f"Watchlist-Nachricht empfangen, beginne Verarbeitung: {message.body.decode()[:100]}")
                 try:
-                    await message.nack(requeue=True)
-                except aio_pika.exceptions.MessageProcessError:
-                    logging.error("Nachricht konnte nicht zurückgestellt werden, da sie bereits verarbeitet wurde.")
+                    watchlist_data = json.loads(message.body.decode())
+                    logging.info(f"Empfangene Watchlist-Daten: {watchlist_data}")
 
-            except Exception as e:
-                logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
-                try:
-                    await message.nack(requeue=True)
-                except aio_pika.exceptions.MessageProcessError:
-                    logging.error("Nachricht konnte nicht zurückgestellt werden, da sie bereits verarbeitet wurde.")
+                    processed = False  # Flag to track if the message has been processed
+
+                    # Iteriere über die API-Clients, um die Nachricht an den richtigen API-Client zu senden
+                    for api_client in api_clients:
+                        version = api_client.api_version
+
+                        if version.startswith("v10"):
+                            # v10 API verwendet player_name und player_id
+                            player_name = watchlist_data.get('player_name')
+                            player_id = watchlist_data.get('player_id')
+                        else:
+                            # v9.x API verwendet player und steam_id_64
+                            player_name = watchlist_data.get('player')
+                            player_id = watchlist_data.get('steam_id_64')
+
+                        # Überprüfung auf fehlende oder ungültige player_id
+                        if not player_id:
+                            logging.error(f"Fehlendes 'player_id' oder 'steam_id_64' in den Watchlist-Daten: {watchlist_data}")
+                            break  # Verlassen der Schleife, um die Nachricht nicht weiter zu verarbeiten
+
+                        # Überprüfung auf fehlende erforderliche Felder
+                        if not player_name:
+                            logging.error(f"Fehlende erforderliche Datenfelder in den Watchlist-Daten: {watchlist_data}")
+                            break  # Verlassen der Schleife, um die Nachricht nicht weiter zu verarbeiten
+
+                        # Aufrufen der entsprechenden API-Methode basierend auf der Client-Version
+                        if api_client.do_watch_player(player_name, player_id, watchlist_data['reason'], watchlist_data['by']):
+                            logging.info(f"Spieler erfolgreich zur Watchlist hinzugefügt: {player_id}")
+                            processed = True
+                        else:
+                            logging.error(f"Fehler beim Hinzufügen zur Watchlist für Player ID: {player_id}")
+                            break  # Nachricht nicht weiterverarbeiten
+
+                    if processed:
+                        await message.ack()
+                    else:
+                        await message.nack(requeue=False)
+
+                except json.JSONDecodeError:
+                    logging.error("Fehler beim Parsen der JSON-Daten")
+                    try:
+                        await message.nack(requeue=True)
+                    except aio_pika.exceptions.MessageProcessError:
+                        logging.error("Nachricht konnte nicht zurückgestellt werden, da sie bereits verarbeitet wurde.")
+
+                except Exception as e:
+                    logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
+                    try:
+                        await message.nack(requeue=True)
+                    except aio_pika.exceptions.MessageProcessError:
+                        logging.error("Nachricht konnte nicht zurückgestellt werden, da sie bereits verarbeitet wurde.")
+    except asyncio.CancelledError:
+        logging.info("Task consume_watchlist_messages wurde abgebrochen.")
+    except Exception as e:
+        logging.error(f"Unerwarteter Fehler in consume_watchlist_messages: {e}")
 
 async def connect_to_unwatch_rabbitmq(client_id):
     logging.info(f"Versuche, eine Verbindung zu RabbitMQ für Unwatch-Nachrichten herzustellen für Client {client_id}...")
@@ -306,39 +326,44 @@ async def connect_to_unwatch_rabbitmq(client_id):
 
 async def consume_unwatch_messages(connection, channel, queue, api_clients):
     logging.info("Beginne mit dem Empfang von Unwatch-Nachrichten...")
-    async with connection, aiohttp.ClientSession() as session:
-        async for message in queue:
-            logging.info(f"Unwatch-Nachricht empfangen, beginne Verarbeitung: {message.body.decode()[:100]}")
-            try:
-                unwatch_data = json.loads(message.body.decode())
-                logging.info(f"Empfangene Unwatch-Daten: {unwatch_data}")
+    try:
+        async with connection, aiohttp.ClientSession() as session:
+            async for message in queue:
+                logging.info(f"Unwatch-Nachricht empfangen, beginne Verarbeitung: {message.body.decode()[:100]}")
+                try:
+                    unwatch_data = json.loads(message.body.decode())
+                    logging.info(f"Empfangene Unwatch-Daten: {unwatch_data}")
 
-                player_name = unwatch_data.get('player_name', unwatch_data.get('player'))
-                player_id = unwatch_data.get('player_id', unwatch_data.get('steam_id_64'))
+                    player_name = unwatch_data.get('player_name', unwatch_data.get('player'))
+                    player_id = unwatch_data.get('player_id', unwatch_data.get('steam_id_64'))
 
-                if not player_name:
-                    logging.error(f"Fehlendes 'player_name' in den Unwatch-Daten: {unwatch_data}")
-                if not player_id:
-                    logging.error(f"Fehlendes 'player_id' in den Unwatch-Daten: {unwatch_data}")
-                if not player_name or not player_id:
-                    logging.error(f"Fehlende erforderliche Datenfelder in den Unwatch-Daten: {unwatch_data}")
-                    await message.nack(requeue(True))
-                    continue
+                    if not player_name:
+                        logging.error(f"Fehlendes 'player_name' in den Unwatch-Daten: {unwatch_data}")
+                    if not player_id:
+                        logging.error(f"Fehlendes 'player_id' in den Unwatch-Daten: {unwatch_data}")
+                    if not player_name or not player_id:
+                        logging.error(f"Fehlende erforderliche Datenfelder in den Unwatch-Daten: {unwatch_data}")
+                        await message.nack(requeue=True)
+                        continue
 
-                for api_client in api_clients:
-                    version = api_client.api_version
+                    for api_client in api_clients:
+                        version = api_client.api_version
 
-                    if api_client.do_unwatch_player(player_name, player_id):
-                        logging.info(f"Spieler erfolgreich von der Watchlist entfernt: {player_id}")
-                    else:
-                        logging.error(f"Fehler beim Entfernen von der Watchlist für Player ID: {player_id}")
-                await message.ack()
-            except json.JSONDecodeError:
-                logging.error("Fehler beim Parsen der JSON-Daten")
-                await message.nack(requeue(True))
-            except Exception as e:
-                logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
-                await message.nack(requeue(True))
+                        if api_client.do_unwatch_player(player_name, player_id):
+                            logging.info(f"Spieler erfolgreich von der Watchlist entfernt: {player_id}")
+                        else:
+                            logging.error(f"Fehler beim Entfernen von der Watchlist für Player ID: {player_id}")
+                    await message.ack()
+                except json.JSONDecodeError:
+                    logging.error("Fehler beim Parsen der JSON-Daten")
+                    await message.nack(requeue=True)
+                except Exception as e:
+                    logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
+                    await message.nack(requeue=True)
+    except asyncio.CancelledError:
+        logging.info("Task consume_unwatch_messages wurde abgebrochen.")
+    except Exception as e:
+        logging.error(f"Unerwarteter Fehler in consume_unwatch_messages: {e}")
 
 async def main():
     api_clients = [APIClient(url.strip(), API_TOKEN, CLIENT_ID) for url in BASE_URLS if url.strip()]
@@ -356,8 +381,29 @@ async def main():
         task_consume_watchlist = asyncio.create_task(consume_watchlist_messages(watchlist_connection, watchlist_channel, watchlist_queue, api_clients))
         task_consume_unwatch = asyncio.create_task(consume_unwatch_messages(unwatch_connection, unwatch_channel, unwatch_queue, api_clients))
 
-        await asyncio.gather(task_consume_ban, task_consume_unban, task_consume_tempban, task_consume_watchlist, task_consume_unwatch)
+        tasks = [
+            task_consume_ban,
+            task_consume_unban,
+            task_consume_tempban,
+            task_consume_watchlist,
+            task_consume_unwatch
+        ]
+
+        await asyncio.gather(*tasks)
+    except KeyboardInterrupt:
+        logging.info("KeyboardInterrupt erhalten, beende das Programm...")
+        tasks = [
+            task_consume_ban,
+            task_consume_unban,
+            task_consume_tempban,
+            task_consume_watchlist,
+            task_consume_unwatch
+        ]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
     finally:
+        logging.info("Schließe Verbindungen...")
         if 'ban_connection' in locals() and ban_connection:
             await ban_connection.close()
         if 'unban_connection' in locals() and unban_connection:
@@ -370,4 +416,7 @@ async def main():
             await unwatch_connection.close()
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.info("Programm wurde durch KeyboardInterrupt beendet.")
