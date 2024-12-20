@@ -35,12 +35,16 @@ async def download_update(zip_url, temp_dir):
     return True
 
 def get_current_version(checkpoint_path):
-    version_pattern = re.compile(r"^__version__\s*=\s*['\"]([^'\"]+)['\"]")
+    # Verbesserte Regex, die führende Leerzeichen erlaubt
+    version_pattern = re.compile(r"^\s*__version__\s*=\s*['\"]([^'\"]+)['\"]")
     with open(checkpoint_path, 'r') as f:
         for line in f:
             match = version_pattern.match(line)
             if match:
-                return match.group(1)
+                version_str = match.group(1)
+                logging.info(f"Updater: Gefundene aktuelle Version: {version_str}")
+                return version_str
+    logging.error("Updater: Aktuelle Version nicht in checkpoint.py gefunden.")
     return None
 
 def replace_files(extracted_path, destination_dir):
@@ -92,54 +96,56 @@ async def main():
 
         current_version = get_current_version(checkpoint_path)
         if not current_version:
-            logging.error("Updater: Aktuelle Version nicht in checkpoint.py gefunden.")
+            logging.error("Updater: Aktuelle Version konnte nicht extrahiert werden.")
             return
 
         logging.info(f"Updater: Aktuelle Version: {current_version}, Neueste Version: {latest_version}")
 
         # Versionsvergleich
-        if version.parse(latest_version) <= version.parse(current_version):
-            logging.info("Updater: Keine neue Version verfügbar. Beende das Updater-Skript.")
+        try:
+            current_parsed = version.parse(current_version)
+            latest_parsed = version.parse(latest_version)
+        except version.InvalidVersion as e:
+            logging.error(f"Updater: Ungültige Versionsnummer: {e}")
             return
 
-        # Temporäres Verzeichnis für das Update
-        temp_dir = os.path.join(current_dir, 'temp_update')
-        if not os.path.exists(temp_dir):
-            os.makedirs(temp_dir)
+        if latest_parsed > current_parsed:
+            logging.info("Updater: Neue Version verfügbar. Starte Update-Prozess...")
+            logging.info(f"Updater: Starte Download des Updates von {zip_url}...")
+            success = await download_update(zip_url, os.path.join(current_dir, 'temp_update'))
+            if not success:
+                return
 
-        # Download und Extraktion des Updates
-        success = await download_update(zip_url, temp_dir)
-        if not success:
-            return
+            # Finden des extrahierten Verzeichnisses
+            temp_dir = os.path.join(current_dir, 'temp_update')
+            extracted_dirs = [name for name in os.listdir(temp_dir) if os.path.isdir(os.path.join(temp_dir, name))]
+            if not extracted_dirs:
+                logging.error("Updater: Kein Verzeichnis im Update-Archiv gefunden.")
+                return
+            extracted_path = os.path.join(temp_dir, extracted_dirs[0])
 
-        # Finden des extrahierten Verzeichnisses
-        extracted_dirs = [name for name in os.listdir(temp_dir) if os.path.isdir(os.path.join(temp_dir, name))]
-        if not extracted_dirs:
-            logging.error("Updater: Kein Verzeichnis im Update-Archiv gefunden.")
-            return
-        extracted_path = os.path.join(temp_dir, extracted_dirs[0])
+            # Ersetzen der alten Dateien durch die neuen Dateien
+            replace_files(extracted_path, current_dir)
 
-        # Ersetzen der alten Dateien durch die neuen Dateien
-        replace_files(extracted_path, current_dir)
+            # Bereinigung des temporären Verzeichnisses
+            shutil.rmtree(temp_dir)
+            logging.info("Updater: Temporäres Verzeichnis bereinigt.")
 
-        # Bereinigung des temporären Verzeichnisses
-        shutil.rmtree(temp_dir)
-        logging.info("Updater: Temporäres Verzeichnis bereinigt.")
+            # Aktualisieren der Versionsvariable in checkpoint.py
+            with open(checkpoint_path, 'r') as f:
+                lines = f.readlines()
+            with open(checkpoint_path, 'w') as f:
+                for line in lines:
+                    if re.match(r"^\s*__version__\s*=\s*['\"]([^'\"]+)['\"]", line):
+                        f.write(f"__version__ = '{latest_version}'\n")
+                    else:
+                        f.write(line)
+            logging.info("Updater: Versionsvariable in checkpoint.py aktualisiert.")
 
-        # Aktualisieren der Versionsvariable in checkpoint.py
-        with open(checkpoint_path, 'r') as f:
-            lines = f.readlines()
-        with open(checkpoint_path, 'w') as f:
-            for line in lines:
-                if line.startswith('__version__'):
-                    f.write(f"__version__ = '{latest_version}'\n")
-                else:
-                    f.write(line)
-        logging.info("Updater: Versionsvariable in checkpoint.py aktualisiert.")
-
-        # Neustarten des Hauptskripts
-        restart_main_script()
-
+            # Neustarten des Hauptskripts
+            restart_main_script()
+        else:
+            logging.info("Updater: Keine neue Version verfügbar.")
     except Exception as e:
         logging.error(f"Updater: Unerwarteter Fehler: {e}")
 
