@@ -32,9 +32,13 @@ RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')
 RABBITMQ_PORT = int(os.getenv('RABBITMQ_PORT', '5672'))
 
 # Aktuelle Skript-Version
-__version__ = '3.6.2'  # Aktualisieren Sie diese Version entsprechend Ihrer aktuellen Version
+__version__ = '3.6.2'  # Stellen Sie sicher, dass keine nachfolgenden Kommentare vorhanden sind
 
 GITHUB_API_URL = 'https://api.github.com/repos/hackletloose/hall-checkpoint-client/releases/latest'
+
+# Definieren der benutzerdefinierten Ausnahme
+class UpdateException(Exception):
+    pass
 
 async def connect_to_rabbitmq(client_id):
     logging.info(f"Versuche, eine Verbindung zu RabbitMQ herzustellen für Client {client_id}...")
@@ -410,9 +414,12 @@ async def auto_update():
                         logging.info("Auto-Updater: Starte updater.py...")
                         subprocess.Popen([sys.executable, 'updater.py'])
                         logging.info("Auto-Updater: Update-Skript gestartet. Beende das aktuelle Skript.")
-                        sys.exit()
+                        raise UpdateException()
                     else:
                         logging.info("Auto-Updater: Keine neue Version verfügbar.")
+        except UpdateException:
+            # Signalisiert den Haupt-Task, dass ein Update stattgefunden hat
+            raise
         except Exception as e:
             logging.error(f"Auto-Updater: Unerwarteter Fehler: {e}")
 
@@ -449,6 +456,19 @@ async def main():
         ]
 
         await asyncio.gather(*tasks)
+    except UpdateException:
+        logging.info("UpdateException ausgelöst, beende das Programm...")
+        tasks = [
+            task_consume_ban,
+            task_consume_unban,
+            task_consume_tempban,
+            task_consume_watchlist,
+            task_consume_unwatch,
+            updater_task
+        ]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
     except KeyboardInterrupt:
         logging.info("KeyboardInterrupt erhalten, beende das Programm...")
         tasks = [
