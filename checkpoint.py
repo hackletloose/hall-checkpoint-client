@@ -2,12 +2,17 @@ import asyncio
 import logging
 import os
 import json
-from api_manager import APIClient
+from api_manager import APIClient, get_major_version
 from dotenv import load_dotenv
 import aio_pika
 from aio_pika import connect_robust, ExchangeType
 import aiohttp
 import datetime
+import re
+import zipfile
+import io
+import sys
+from packaging import version  # Für robuste Versionsvergleiche
 
 # Konfigurieren des Loggings
 logging.basicConfig(level=logging.INFO,
@@ -27,6 +32,10 @@ RABBITMQ_PASS = os.getenv('RABBITMQ_PASS')
 RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')
 RABBITMQ_PORT = int(os.getenv('RABBITMQ_PORT', '5672'))
 
+# Aktuelle Skript-Version
+__version__ = '3.6.0'  # Aktualisieren Sie diese Version entsprechend Ihrer aktuellen Version
+
+GITHUB_API_URL = 'https://api.github.com/repos/hackletloose/hall-checkpoint-client/releases/latest'
 
 async def connect_to_rabbitmq(client_id):
     logging.info(f"Versuche, eine Verbindung zu RabbitMQ herzustellen für Client {client_id}...")
@@ -48,41 +57,49 @@ async def consume_messages(connection, channel, queue, api_clients):
         async with connection, aiohttp.ClientSession() as session:
             async for message in queue:
                 async with message.process():
-                    logging.info(f"Nachricht empfangen, beginne Verarbeitung: {message.body.decode()[:100]}")
-                    ban_data = json.loads(message.body.decode())
-                    logging.info(f"Empfangene Ban-Daten: {ban_data}")
+                    try:
+                        body = message.body.decode()
+                        logging.info(f"Nachricht empfangen, beginne Verarbeitung: {body[:100]}")
+                        ban_data = json.loads(body)
+                        logging.info(f"Empfangene Ban-Daten: {ban_data}")
 
-                    player_name = ban_data.get('player_name', ban_data.get('player'))
-                    player_id = ban_data.get('player_id', ban_data.get('steam_id_64'))
+                        player_name = ban_data.get('player_name', ban_data.get('player'))
+                        player_id = ban_data.get('player_id', ban_data.get('steam_id_64'))
 
-                    if not player_name:
-                        logging.error(f"Fehlendes 'player_name' in den Ban-Daten: {ban_data}")
-                        raise ValueError("player_name fehlt")
-                    if not player_id:
-                        logging.error(f"Fehlendes 'player_id' in den Ban-Daten: {ban_data}")
-                        raise ValueError("player_id fehlt")
+                        if not player_name:
+                            logging.error(f"Fehlendes 'player_name' in den Ban-Daten: {ban_data}")
+                            raise ValueError("player_name fehlt")
+                        if not player_id:
+                            logging.error(f"Fehlendes 'player_id' in den Ban-Daten: {ban_data}")
+                            raise ValueError("player_id fehlt")
 
-                    for api_client in api_clients:
-                        steam_id = player_id
-                        # Permanent-Ban durchführen
-                        if api_client.do_perma_ban(player_name, steam_id, ban_data['reason'], ban_data['by']):
-                            logging.info(f"Permanent-Bann erfolgreich für Steam ID: {steam_id}")
-                        else:
-                            logging.error(f"Permanent-Bann fehlgeschlagen für Steam ID: {steam_id}")
+                        for api_client in api_clients:
+                            steam_id = player_id
+                            # Permanent-Ban durchführen
+                            if api_client.do_perma_ban(player_name, steam_id, ban_data['reason'], ban_data['by']):
+                                logging.info(f"Permanent-Bann erfolgreich für Steam ID: {steam_id}")
+                            else:
+                                logging.error(f"Permanent-Bann fehlgeschlagen für Steam ID: {steam_id}")
 
-                        # Kommentar posten
-                        comment_message = f"Ban Detail: https://hackletloose.eu/ban_detail.php?steam_id={steam_id}"
-                        if api_client.post_player_comment(steam_id, comment_message):
-                            logging.info(f"Erfolgreich Kommentar gepostet für Steam ID: {steam_id}")
-                        else:
-                            logging.error(f"Fehler beim Posten des Kommentars für Steam ID: {steam_id}. Kommentar: {comment_message}")
+                            # Kommentar posten
+                            comment_message = f"Ban Detail: https://hackletloose.eu/ban_detail.php?steam_id={steam_id}"
+                            if api_client.post_player_comment(steam_id, comment_message):
+                                logging.info(f"Erfolgreich Kommentar gepostet für Steam ID: {steam_id}")
+                            else:
+                                logging.error(f"Fehler beim Posten des Kommentars für Steam ID: {steam_id}. Kommentar: {comment_message}")
 
-                        # Spieler auf die Blacklist setzen
-                        if api_client.do_blacklist_player(steam_id, player_name, ban_data['reason'], ban_data['by']):
-                            logging.info(f"Spieler erfolgreich auf die Blacklist gesetzt: {steam_id}")
-                        else:
-                            logging.error(f"Fehler beim Setzen auf die Blacklist für Steam ID: {steam_id}")
+                            # Spieler auf die Blacklist setzen
+                            if api_client.do_blacklist_player(steam_id, player_name, ban_data['reason'], ban_data['by']):
+                                logging.info(f"Spieler erfolgreich auf die Blacklist gesetzt: {steam_id}")
+                            else:
+                                logging.error(f"Fehler beim Setzen auf die Blacklist für Steam ID: {steam_id}")
 
+                    except json.JSONDecodeError:
+                        logging.error("Fehler beim Parsen der JSON-Daten")
+                        raise
+                    except Exception as e:
+                        logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
+                        raise
     except asyncio.CancelledError:
         logging.info("Task consume_messages wurde abgebrochen.")
     except Exception as e:
@@ -108,29 +125,49 @@ async def consume_unban_messages(connection, channel, queue, api_clients):
         async with connection, aiohttp.ClientSession() as session:
             async for message in queue:
                 async with message.process():
-                    logging.info(f"Unban-Nachricht empfangen, beginne Verarbeitung: {message.body.decode()[:100]}")
-                    unban_data = json.loads(message.body.decode())
-                    logging.info(f"Empfangene Unban-Daten: {unban_data}")
+                    try:
+                        body = message.body.decode()
+                        logging.info(f"Unban-Nachricht empfangen, beginne Verarbeitung: {body[:100]}")
+                        unban_data = json.loads(body)
+                        logging.info(f"Empfangene Unban-Daten: {unban_data}")
 
-                    player_name = unban_data.get('player_name', unban_data.get('player'))
-                    player_id = unban_data.get('player_id', unban_data.get('steam_id_64'))
+                        player_name = unban_data.get('player_name', unban_data.get('player'))
+                        player_id = unban_data.get('player_id', unban_data.get('steam_id_64'))
 
-                    if not player_name or not player_id:
-                        logging.error(f"Fehlende Daten in Unban-Daten: {unban_data}")
-                        raise ValueError("Unban Daten unvollständig")
+                        if not player_name or not player_id:
+                            logging.error(f"Fehlende Daten in Unban-Daten: {unban_data}")
+                            raise ValueError("Unban Daten unvollständig")
 
-                    for api_client in api_clients:
-                        if api_client.do_unban(player_id):
-                            logging.info(f"Unban erfolgreich für Player ID: {player_id}")
-                        else:
-                            logging.error(f"Unban-Vorgang fehlgeschlagen für Player ID: {player_id}")
+                        for api_client in api_clients:
+                            major_version = get_major_version(api_client.api_version)
+                            if major_version >= 10:
+                                pn = player_name
+                                pid = player_id
+                            else:
+                                pn = unban_data.get('player')
+                                pid = unban_data.get('steam_id_64')
 
-                        logging.info(f"Versuche, den Spieler von der Blacklist zu entfernen: Player ID: {player_id}")
-                        if api_client.unblacklist_player(player_id):
-                            logging.info(f"Spieler erfolgreich von der Blacklist entfernt: Player ID: {player_id}")
-                        else:
-                            logging.error(f"Unblacklist-Vorgang fehlgeschlagen für Player ID: {player_id}")
+                            if not pn or not pid:
+                                logging.error(f"Fehlende Felder in Unban-Daten für Version {api_client.api_version}: {unban_data}")
+                                raise ValueError("Unban Daten unvollständig")
 
+                            if api_client.do_unban(pid):
+                                logging.info(f"Unban erfolgreich für Player ID: {pid}")
+                            else:
+                                logging.error(f"Unban-Vorgang fehlgeschlagen für Player ID: {pid}")
+
+                            logging.info(f"Versuche, den Spieler von der Blacklist zu entfernen: Player ID: {pid}")
+                            if api_client.unblacklist_player(pid):
+                                logging.info(f"Spieler erfolgreich von der Blacklist entfernt: {pid}")
+                            else:
+                                logging.error(f"Unblacklist-Vorgang fehlgeschlagen für Player ID: {pid}")
+
+                    except json.JSONDecodeError:
+                        logging.error("Fehler beim Parsen der JSON-Daten")
+                        raise
+                    except Exception as e:
+                        logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
+                        raise
     except asyncio.CancelledError:
         logging.info("Task consume_unban_messages wurde abgebrochen.")
     except Exception as e:
@@ -169,25 +206,45 @@ async def consume_tempban_messages(connection, channel, queue, api_clients):
         async with connection, aiohttp.ClientSession() as session:
             async for message in queue:
                 async with message.process():
-                    logging.info(f"Tempban-Nachricht empfangen, beginne Verarbeitung: {message.body.decode()[:100]}")
-                    ban_data = json.loads(message.body.decode())
-                    logging.info(f"Empfangene Tempban-Daten: {ban_data}")
+                    try:
+                        body = message.body.decode()
+                        logging.info(f"Tempban-Nachricht empfangen, beginne Verarbeitung: {body[:100]}")
+                        ban_data = json.loads(body)
+                        logging.info(f"Empfangene Tempban-Daten: {ban_data}")
 
-                    player_name = ban_data.get('player_name') or ban_data.get('player')
-                    player_id = ban_data.get('player_id') or ban_data.get('steam_id_64')
+                        player_name = ban_data.get('player_name') or ban_data.get('player')
+                        player_id = ban_data.get('player_id') or ban_data.get('steam_id_64')
 
-                    if not player_name or not player_id:
-                        logging.error(f"Fehlende Daten in Tempban-Daten: {ban_data}")
-                        raise ValueError("Tempban Daten unvollständig")
+                        if not player_name or not player_id:
+                            logging.error(f"Fehlende Daten in Tempban-Daten: {ban_data}")
+                            raise ValueError("Tempban Daten unvollständig")
 
-                    for api_client in api_clients:
-                        duration_hours = ban_data.get('duration_hours', 24)
+                        for api_client in api_clients:
+                            major_version = get_major_version(api_client.api_version)
+                            if major_version >= 10:
+                                pn = player_name
+                                pid = player_id
+                            else:
+                                pn = ban_data.get('player')
+                                pid = ban_data.get('steam_id_64')
 
-                        if api_client.do_temp_ban(player_name, player_id, duration_hours, ban_data['reason'], ban_data['by']):
-                            logging.info(f"Tempban erfolgreich für Steam ID: {player_id}")
-                        else:
-                            logging.error(f"Tempban-Vorgang fehlgeschlagen für Steam ID: {player_id}")
+                            if not pn or not pid:
+                                logging.error(f"Fehlende Felder in Tempban-Daten für Version {api_client.api_version}: {ban_data}")
+                                raise ValueError("Tempban Daten unvollständig")
 
+                            duration_hours = ban_data.get('duration_hours', 24)
+
+                            if api_client.do_temp_ban(pn, pid, duration_hours, ban_data['reason'], ban_data['by']):
+                                logging.info(f"Tempban erfolgreich für Steam ID: {pid}")
+                            else:
+                                logging.error(f"Tempban-Vorgang fehlgeschlagen für Steam ID: {pid}")
+
+                    except json.JSONDecodeError:
+                        logging.error("Fehler beim Parsen der JSON-Daten")
+                        raise
+                    except Exception as e:
+                        logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
+                        raise
     except asyncio.CancelledError:
         logging.info("Task consume_tempban_messages wurde abgebrochen.")
     except Exception as e:
@@ -213,39 +270,43 @@ async def consume_watchlist_messages(connection, channel, queue, api_clients):
         async with connection, aiohttp.ClientSession() as session:
             async for message in queue:
                 async with message.process():
-                    logging.info(f"Watchlist-Nachricht empfangen, beginne Verarbeitung: {message.body.decode()[:100]}")
-                    watchlist_data = json.loads(message.body.decode())
-                    logging.info(f"Empfangene Watchlist-Daten: {watchlist_data}")
+                    try:
+                        body = message.body.decode()
+                        logging.info(f"Watchlist-Nachricht empfangen, beginne Verarbeitung: {body[:100]}")
+                        watchlist_data = json.loads(body)
+                        logging.info(f"Empfangene Watchlist-Daten: {watchlist_data}")
 
-                    processed = False
+                        processed = False
 
-                    for api_client in api_clients:
-                        player_name = None
-                        player_id = None
-                        version = api_client.api_version
-                        # Für v10 und höher player_name / player_id
-                        # Für darunter player / steam_id_64
-                        if version.startswith("v10"):
-                            player_name = watchlist_data.get('player_name')
-                            player_id = watchlist_data.get('player_id')
-                        else:
-                            player_name = watchlist_data.get('player')
-                            player_id = watchlist_data.get('steam_id_64')
+                        for api_client in api_clients:
+                            major_version = get_major_version(api_client.api_version)
+                            if major_version >= 10:
+                                player_name = watchlist_data.get('player_name')
+                                player_id = watchlist_data.get('player_id')
+                            else:
+                                player_name = watchlist_data.get('player')
+                                player_id = watchlist_data.get('steam_id_64')
 
-                        if not player_id or not player_name:
-                            logging.error(f"Fehlende erforderliche Datenfelder in den Watchlist-Daten: {watchlist_data}")
-                            raise ValueError("Watchlist Daten unvollständig")
+                            if not player_name or not player_id:
+                                logging.error(f"Fehlende erforderliche Datenfelder in den Watchlist-Daten: {watchlist_data}")
+                                raise ValueError("Watchlist Daten unvollständig")
 
-                        if api_client.do_watch_player(player_name, player_id, watchlist_data['reason'], watchlist_data['by']):
-                            logging.info(f"Spieler erfolgreich zur Watchlist hinzugefügt: {player_id}")
-                            processed = True
-                        else:
-                            logging.error(f"Fehler beim Hinzufügen zur Watchlist für Player ID: {player_id}")
-                            raise RuntimeError("Fehler beim Watchlist-Hinzufügen")
+                            if api_client.do_watch_player(player_name, player_id, watchlist_data['reason'], watchlist_data['by']):
+                                logging.info(f"Spieler erfolgreich zur Watchlist hinzugefügt: {player_id}")
+                                processed = True
+                            else:
+                                logging.error(f"Fehler beim Hinzufügen zur Watchlist für Player ID: {player_id}")
+                                raise RuntimeError("Fehler beim Watchlist-Hinzufügen")
 
-                    if not processed:
-                        raise RuntimeError("Nachricht konnte nicht verarbeitet werden")
+                        if not processed:
+                            raise RuntimeError("Nachricht konnte nicht verarbeitet werden")
 
+                    except json.JSONDecodeError:
+                        logging.error("Fehler beim Parsen der JSON-Daten")
+                        raise
+                    except Exception as e:
+                        logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
+                        raise
     except asyncio.CancelledError:
         logging.info("Task consume_watchlist_messages wurde abgebrochen.")
     except Exception as e:
@@ -271,30 +332,140 @@ async def consume_unwatch_messages(connection, channel, queue, api_clients):
         async with connection, aiohttp.ClientSession() as session:
             async for message in queue:
                 async with message.process():
-                    logging.info(f"Unwatch-Nachricht empfangen, beginne Verarbeitung: {message.body.decode()[:100]}")
-                    unwatch_data = json.loads(message.body.decode())
-                    logging.info(f"Empfangene Unwatch-Daten: {unwatch_data}")
+                    try:
+                        body = message.body.decode()
+                        logging.info(f"Unwatch-Nachricht empfangen, beginne Verarbeitung: {body[:100]}")
+                        unwatch_data = json.loads(body)
+                        logging.info(f"Empfangene Unwatch-Daten: {unwatch_data}")
 
-                    player_name = unwatch_data.get('player_name', unwatch_data.get('player'))
-                    player_id = unwatch_data.get('player_id', unwatch_data.get('steam_id_64'))
+                        player_name = unwatch_data.get('player_name', unwatch_data.get('player'))
+                        player_id = unwatch_data.get('player_id', unwatch_data.get('steam_id_64'))
 
-                    if not player_name or not player_id:
-                        logging.error(f"Fehlende Daten in Unwatch-Daten: {unwatch_data}")
-                        raise ValueError("Unwatch Daten unvollständig")
+                        if not player_name or not player_id:
+                            logging.error(f"Fehlende Daten in Unwatch-Daten: {unwatch_data}")
+                            raise ValueError("Unwatch Daten unvollständig")
 
-                    for api_client in api_clients:
-                        if api_client.do_unwatch_player(player_name, player_id):
-                            logging.info(f"Spieler erfolgreich von der Watchlist entfernt: {player_id}")
-                        else:
-                            logging.error(f"Fehler beim Entfernen von der Watchlist für Player ID: {player_id}")
-                            raise RuntimeError("Fehler beim Unwatch")
+                        for api_client in api_clients:
+                            major_version = get_major_version(api_client.api_version)
+                            if major_version >= 10:
+                                pn = player_name
+                                pid = player_id
+                            else:
+                                pn = unwatch_data.get('player')
+                                pid = unwatch_data.get('steam_id_64')
 
+                            if not pn or not pid:
+                                logging.error(f"Fehlende erforderliche Datenfelder in den Unwatch-Daten: {unwatch_data}")
+                                raise ValueError("Unwatch Daten unvollständig")
+
+                            if api_client.do_unwatch_player(pn, pid):
+                                logging.info(f"Spieler erfolgreich von der Watchlist entfernt: {pid}")
+                            else:
+                                logging.error(f"Fehler beim Entfernen von der Watchlist für Player ID: {pid}")
+                                raise RuntimeError("Fehler beim Unwatch")
+
+                    except json.JSONDecodeError:
+                        logging.error("Fehler beim Parsen der JSON-Daten")
+                        raise
+                    except Exception as e:
+                        logging.error(f"Unerwarteter Fehler beim Verarbeiten der Nachricht: {e}")
+                        raise
     except asyncio.CancelledError:
         logging.info("Task consume_unwatch_messages wurde abgebrochen.")
     except Exception as e:
         logging.error(f"Unerwarteter Fehler in consume_unwatch_messages: {e}")
 
+async def auto_update():
+    await asyncio.sleep(1)  # Kurze Verzögerung beim Start
+
+    while True:
+        logging.info("Auto-Updater: Prüfe auf neue Releases auf GitHub...")
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(GITHUB_API_URL) as response:
+                    if response.status != 200:
+                        logging.error(f"Auto-Updater: Fehler beim Abrufen der GitHub-API: {response.status}")
+                        await asyncio.sleep(3600)  # Warte eine Stunde bis zum nächsten Check
+                        continue
+                    data = await response.json()
+                    latest_version = data.get('tag_name', '').lstrip('v')
+                    if not latest_version:
+                        logging.error("Auto-Updater: Konnte die neueste Version nicht ermitteln.")
+                        await asyncio.sleep(3600)
+                        continue
+
+                    current_version = __version__
+                    logging.info(f"Auto-Updater: Aktuelle Version: {current_version}, Neueste Version: {latest_version}")
+
+                    # Versionsvergleich mit packaging.version
+                    if version.parse(latest_version) > version.parse(current_version):
+                        logging.info("Auto-Updater: Neue Version verfügbar. Starte Update-Prozess...")
+                        zip_url = data.get('zipball_url')
+                        if not zip_url:
+                            logging.error("Auto-Updater: Konnte die Zipball-URL nicht finden.")
+                            await asyncio.sleep(3600)
+                            continue
+
+                        async with session.get(zip_url) as zip_response:
+                            if zip_response.status != 200:
+                                logging.error(f"Auto-Updater: Fehler beim Herunterladen des Updates: {zip_response.status}")
+                                await asyncio.sleep(3600)
+                                continue
+                            zip_content = await zip_response.read()
+
+                        with zipfile.ZipFile(io.BytesIO(zip_content)) as z:
+                            # Extrahiere alle Dateien in ein temporäres Verzeichnis
+                            temp_dir = os.path.join(os.path.dirname(__file__), 'temp_update')
+                            if not os.path.exists(temp_dir):
+                                os.makedirs(temp_dir)
+
+                            z.extractall(temp_dir)
+                            logging.info("Auto-Updater: Update-Archiv erfolgreich extrahiert.")
+
+                            # Da das Zipball einen Unterordner enthält, finden wir den ersten Ordner
+                            extracted_dirs = [name for name in os.listdir(temp_dir) if os.path.isdir(os.path.join(temp_dir, name))]
+                            if not extracted_dirs:
+                                logging.error("Auto-Updater: Kein Verzeichnis im Update-Archiv gefunden.")
+                                await asyncio.sleep(3600)
+                                continue
+                            extracted_path = os.path.join(temp_dir, extracted_dirs[0])
+
+                            # Kopiere die aktualisierten Dateien über die bestehenden
+                            for root, dirs, files in os.walk(extracted_path):
+                                relative_path = os.path.relpath(root, extracted_path)
+                                destination_dir = os.path.join(os.path.dirname(__file__), relative_path)
+                                if not os.path.exists(destination_dir):
+                                    os.makedirs(destination_dir)
+                                for file in files:
+                                    source_file = os.path.join(root, file)
+                                    dest_file = os.path.join(destination_dir, file)
+                                    if file in ['checkpoint.py', 'api_manager.py']:
+                                        logging.info(f"Auto-Updater: Aktualisiere Datei {file}.")
+                                        os.replace(source_file, dest_file)
+                                    else:
+                                        # Kopiere andere Dateien nach Bedarf
+                                        logging.info(f"Auto-Updater: Kopiere Datei {file}.")
+                                        os.replace(source_file, dest_file)
+
+                        logging.info("Auto-Updater: Update abgeschlossen. Starte das Skript neu...")
+                        # Aktualisiere die Versionsvariable
+                        global __version__
+                        __version__ = latest_version
+                        # Starte das Skript neu
+                        os.execv(sys.executable, ['python'] + sys.argv)
+                    else:
+                        logging.info("Auto-Updater: Keine neue Version verfügbar.")
+        except Exception as e:
+            logging.error(f"Auto-Updater: Unerwarteter Fehler: {e}")
+
+        # Warte eine Stunde bis zum nächsten Check
+        logging.info("Auto-Updater: Warte eine Stunde bis zum nächsten Check.")
+        await asyncio.sleep(3600)
+
 async def main():
+    # Starte den Auto-Updater Task
+    updater_task = asyncio.create_task(auto_update())
+
     api_clients = [APIClient(url.strip(), API_TOKEN, CLIENT_ID) for url in BASE_URLS if url.strip()]
 
     try:
@@ -315,7 +486,8 @@ async def main():
             task_consume_unban,
             task_consume_tempban,
             task_consume_watchlist,
-            task_consume_unwatch
+            task_consume_unwatch,
+            updater_task
         ]
 
         await asyncio.gather(*tasks)
@@ -326,7 +498,8 @@ async def main():
             task_consume_unban,
             task_consume_tempban,
             task_consume_watchlist,
-            task_consume_unwatch
+            task_consume_unwatch,
+            updater_task
         ]
         for task in tasks:
             task.cancel()

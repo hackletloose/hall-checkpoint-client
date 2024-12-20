@@ -117,8 +117,13 @@ class APIClient:
             return False
 
     def unblacklist_player(self, player_id):
-        unblacklist_url = f"{self.base_url}/api/unblacklist_player"
-        payload = {'player_id': player_id}
+        major_version = get_major_version(self.api_version)
+        if major_version >= 10:
+            unblacklist_url = f"{self.base_url}/api/unblacklist_player"
+            payload = {'player_id': player_id}
+        else:
+            unblacklist_url = f"{self.base_url}/api/unblacklist_player"
+            payload = {'steam_id_64': player_id}
         try:
             response = self.session.post(unblacklist_url, json=payload)
             logging.info(f"unblacklist_player response: {response.status_code}, {response.text}")
@@ -254,7 +259,7 @@ class APIClient:
             'timestamp': timestamp
         }
         try:
-            response = requests.post(url, json=data)
+            response = self.session.post(url, json=data)
             if response.status_code == 200:
                 logging.info(f"API-Version {self.api_version} erfolgreich gemeldet für Client {client_id} mit Timestamp {timestamp}")
             else:
