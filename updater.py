@@ -7,6 +7,7 @@ import asyncio
 import logging
 import shutil
 import subprocess
+import re
 
 from packaging import version  # Für robuste Versionsvergleiche
 
@@ -33,6 +34,15 @@ async def download_update(zip_url, temp_dir):
     logging.info("Updater: Update-Archiv erfolgreich extrahiert.")
     return True
 
+def get_current_version(checkpoint_path):
+    version_pattern = re.compile(r"^__version__\s*=\s*['\"]([^'\"]+)['\"]")
+    with open(checkpoint_path, 'r') as f:
+        for line in f:
+            match = version_pattern.match(line)
+            if match:
+                return match.group(1)
+    return None
+
 def replace_files(extracted_path, destination_dir):
     logging.info("Updater: Ersetze alte Dateien durch die neuen Dateien...")
     for root, dirs, files in os.walk(extracted_path):
@@ -53,7 +63,7 @@ def replace_files(extracted_path, destination_dir):
 def restart_main_script():
     logging.info("Updater: Starte das Hauptskript neu...")
     try:
-        subprocess.Popen(['python', 'checkpoint.py'])
+        subprocess.Popen([sys.executable, 'checkpoint.py'])
         logging.info("Updater: Hauptskript erfolgreich neu gestartet.")
     except Exception as e:
         logging.error(f"Updater: Fehler beim Neustarten des Hauptskripts: {e}")
@@ -80,14 +90,10 @@ async def main():
             logging.error("Updater: Hauptskript checkpoint.py nicht gefunden.")
             return
 
-        with open(checkpoint_path, 'r') as f:
-            for line in f:
-                if line.startswith('__version__'):
-                    current_version = line.split('=')[1].strip().strip("'\"")
-                    break
-            else:
-                logging.error("Updater: Aktuelle Version nicht in checkpoint.py gefunden.")
-                return
+        current_version = get_current_version(checkpoint_path)
+        if not current_version:
+            logging.error("Updater: Aktuelle Version nicht in checkpoint.py gefunden.")
+            return
 
         logging.info(f"Updater: Aktuelle Version: {current_version}, Neueste Version: {latest_version}")
 

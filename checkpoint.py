@@ -408,7 +408,7 @@ async def auto_update():
 
                         # Starte das Update-Skript
                         logging.info("Auto-Updater: Starte updater.py...")
-                        subprocess.Popen(['python', 'updater.py'])
+                        subprocess.Popen([sys.executable, 'updater.py'])
                         logging.info("Auto-Updater: Update-Skript gestartet. Beende das aktuelle Skript.")
                         sys.exit()
                     else:
