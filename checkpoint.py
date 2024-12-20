@@ -33,7 +33,7 @@ RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')
 RABBITMQ_PORT = int(os.getenv('RABBITMQ_PORT', '5672'))
 
 # Aktuelle Skript-Version
-__version__ = '3.6.0'  # Aktualisieren Sie diese Version entsprechend Ihrer aktuellen Version
+__version__ = '3.6.1'  # Aktualisieren Sie diese Version entsprechend Ihrer aktuellen Version
 
 GITHUB_API_URL = 'https://api.github.com/repos/hackletloose/hall-checkpoint-client/releases/latest'
 
