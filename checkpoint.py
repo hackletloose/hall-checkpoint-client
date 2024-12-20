@@ -33,7 +33,7 @@ RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')
 RABBITMQ_PORT = int(os.getenv('RABBITMQ_PORT', '5672'))
 
 # Aktuelle Skript-Version
-__version__ = '3.6.1'  # Aktualisieren Sie diese Version entsprechend Ihrer aktuellen Version
+__version__ = '3.6.0'  # Aktualisieren Sie diese Version entsprechend Ihrer aktuellen Version
 
 GITHUB_API_URL = 'https://api.github.com/repos/hackletloose/hall-checkpoint-client/releases/latest'
 
@@ -376,6 +376,7 @@ async def consume_unwatch_messages(connection, channel, queue, api_clients):
         logging.error(f"Unerwarteter Fehler in consume_unwatch_messages: {e}")
 
 async def auto_update():
+    global __version__  # Deklariere die globale Variable am Anfang der Funktion
     await asyncio.sleep(1)  # Kurze Verzögerung beim Start
 
     while True:
@@ -449,7 +450,6 @@ async def auto_update():
 
                         logging.info("Auto-Updater: Update abgeschlossen. Starte das Skript neu...")
                         # Aktualisiere die Versionsvariable
-                        global __version__
                         __version__ = latest_version
                         # Starte das Skript neu
                         os.execv(sys.executable, ['python'] + sys.argv)
