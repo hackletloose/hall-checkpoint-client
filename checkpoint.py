@@ -5,13 +5,12 @@ import json
 from api_manager import APIClient, get_major_version
 from dotenv import load_dotenv
 import aio_pika
-from aio_pika import connect_robust, ExchangeType
+from aio_pika import ExchangeType
 import aiohttp
 import datetime
 import re
-import zipfile
-import io
 import sys
+import subprocess
 from packaging import version  # Für robuste Versionsvergleiche
 
 # Konfigurieren des Loggings
@@ -33,7 +32,7 @@ RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')
 RABBITMQ_PORT = int(os.getenv('RABBITMQ_PORT', '5672'))
 
 # Aktuelle Skript-Version
-__version__ = '3.6.1'  # Aktualisieren Sie diese Version entsprechend Ihrer aktuellen Version
+__version__ = '3.6.2'  # Aktualisieren Sie diese Version entsprechend Ihrer aktuellen Version
 
 GITHUB_API_URL = 'https://api.github.com/repos/hackletloose/hall-checkpoint-client/releases/latest'
 
@@ -407,52 +406,11 @@ async def auto_update():
                             await asyncio.sleep(3600)
                             continue
 
-                        async with session.get(zip_url) as zip_response:
-                            if zip_response.status != 200:
-                                logging.error(f"Auto-Updater: Fehler beim Herunterladen des Updates: {zip_response.status}")
-                                await asyncio.sleep(3600)
-                                continue
-                            zip_content = await zip_response.read()
-
-                        with zipfile.ZipFile(io.BytesIO(zip_content)) as z:
-                            # Extrahiere alle Dateien in ein temporäres Verzeichnis
-                            temp_dir = os.path.join(os.path.dirname(__file__), 'temp_update')
-                            if not os.path.exists(temp_dir):
-                                os.makedirs(temp_dir)
-
-                            z.extractall(temp_dir)
-                            logging.info("Auto-Updater: Update-Archiv erfolgreich extrahiert.")
-
-                            # Da das Zipball einen Unterordner enthält, finden wir den ersten Ordner
-                            extracted_dirs = [name for name in os.listdir(temp_dir) if os.path.isdir(os.path.join(temp_dir, name))]
-                            if not extracted_dirs:
-                                logging.error("Auto-Updater: Kein Verzeichnis im Update-Archiv gefunden.")
-                                await asyncio.sleep(3600)
-                                continue
-                            extracted_path = os.path.join(temp_dir, extracted_dirs[0])
-
-                            # Kopiere die aktualisierten Dateien über die bestehenden
-                            for root, dirs, files in os.walk(extracted_path):
-                                relative_path = os.path.relpath(root, extracted_path)
-                                destination_dir = os.path.join(os.path.dirname(__file__), relative_path)
-                                if not os.path.exists(destination_dir):
-                                    os.makedirs(destination_dir)
-                                for file in files:
-                                    source_file = os.path.join(root, file)
-                                    dest_file = os.path.join(destination_dir, file)
-                                    if file in ['checkpoint.py', 'api_manager.py']:
-                                        logging.info(f"Auto-Updater: Aktualisiere Datei {file}.")
-                                        os.replace(source_file, dest_file)
-                                    else:
-                                        # Kopiere andere Dateien nach Bedarf
-                                        logging.info(f"Auto-Updater: Kopiere Datei {file}.")
-                                        os.replace(source_file, dest_file)
-
-                        logging.info("Auto-Updater: Update abgeschlossen. Starte das Skript neu...")
-                        # Aktualisiere die Versionsvariable
-                        __version__ = latest_version
-                        # Starte das Skript neu
-                        os.execv(sys.executable, ['python'] + sys.argv)
+                        # Starte das Update-Skript
+                        logging.info("Auto-Updater: Starte updater.py...")
+                        subprocess.Popen(['python', 'updater.py'])
+                        logging.info("Auto-Updater: Update-Skript gestartet. Beende das aktuelle Skript.")
+                        sys.exit()
                     else:
                         logging.info("Auto-Updater: Keine neue Version verfügbar.")
         except Exception as e:
