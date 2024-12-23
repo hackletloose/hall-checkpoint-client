@@ -31,8 +31,11 @@ RABBITMQ_PASS = os.getenv('RABBITMQ_PASS')
 RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')
 RABBITMQ_PORT = int(os.getenv('RABBITMQ_PORT', '5672'))
 
+# Neue Umgebungsvariable für den Auto-Updater
+DISABLE_AUTO_UPDATER = os.getenv('DISABLE_AUTO_UPDATER', 'false').lower() in ('true', '1', 'yes')
+
 # Aktuelle Skript-Version
-__version__ = '3.6.2'  # Stellen Sie sicher, dass keine nachfolgenden Kommentare vorhanden sind
+__version__ = '3.6.3'  # Aktualisiert auf die neue Version
 
 GITHUB_API_URL = 'https://api.github.com/repos/hackletloose/hall-checkpoint-client/releases/latest'
 
@@ -428,8 +431,16 @@ async def auto_update():
         await asyncio.sleep(3600)
 
 async def main():
-    # Starte den Auto-Updater Task
-    updater_task = asyncio.create_task(auto_update())
+    # Liste für alle Aufgaben
+    tasks = []
+    
+    # Starten des Auto-Updater Tasks, falls nicht deaktiviert
+    if not DISABLE_AUTO_UPDATER:
+        logging.info("Auto-Updater ist aktiviert.")
+        updater_task = asyncio.create_task(auto_update())
+        tasks.append(updater_task)
+    else:
+        logging.info("Auto-Updater ist deaktiviert.")
 
     api_clients = [APIClient(url.strip(), API_TOKEN, CLIENT_ID) for url in BASE_URLS if url.strip()]
 
@@ -446,39 +457,22 @@ async def main():
         task_consume_watchlist = asyncio.create_task(consume_watchlist_messages(watchlist_connection, watchlist_channel, watchlist_queue, api_clients))
         task_consume_unwatch = asyncio.create_task(consume_unwatch_messages(unwatch_connection, unwatch_channel, unwatch_queue, api_clients))
 
-        tasks = [
+        tasks.extend([
             task_consume_ban,
             task_consume_unban,
             task_consume_tempban,
             task_consume_watchlist,
-            task_consume_unwatch,
-            updater_task
-        ]
+            task_consume_unwatch
+        ])
 
         await asyncio.gather(*tasks)
     except UpdateException:
         logging.info("UpdateException ausgelöst, beende das Programm...")
-        tasks = [
-            task_consume_ban,
-            task_consume_unban,
-            task_consume_tempban,
-            task_consume_watchlist,
-            task_consume_unwatch,
-            updater_task
-        ]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
     except KeyboardInterrupt:
         logging.info("KeyboardInterrupt erhalten, beende das Programm...")
-        tasks = [
-            task_consume_ban,
-            task_consume_unban,
-            task_consume_tempban,
-            task_consume_watchlist,
-            task_consume_unwatch,
-            updater_task
-        ]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
