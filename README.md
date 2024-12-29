@@ -8,7 +8,7 @@ Bevor du den Ban-Client installierst, stelle sicher, dass du folgende Voraussetz
 - `python-dotenv` Bibliothek
 
 Diese Abhängigkeiten kannst du über pip installieren:\
-`pip install aiohttp aio_pika python-dotenv`
+`pip install -r requirements.txt`
 
 ## Installation
 1. Gehe an den Ort auf deinem Server, an dem der Checkpoint Client in Zukunft ausgeführt werden soll.
